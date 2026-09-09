@@ -1,7 +1,14 @@
 package main
 
-import "fmt"
+import (
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+)
 
 func main() {
-	fmt.Println("Hello, world. FileSync starting up...")
+	a := app.New()
+	w := a.NewWindow("FileSync")
+	w.Resize(fyne.NewSize(700, 550))
+
+	w.ShowAndRun()
 }
