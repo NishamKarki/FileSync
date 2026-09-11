@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>FileSync - Conflict detection</title>
+
+    <link rel="stylesheet" href="conflict-window.css">
+</head>
+
+<body>
+
+    <div class="conflict-window">
+
+        <!-- Header -->
+        <div class="conflict-window-title">
+            <h2>Synchronization Conflict</h2>
+            <button>×</button>
+        </div>
+
+
+        <!-- Main Content -->
+        <div class="conflict-content">
+
+            <div class="file-info">
+
+                <div>
+                    <p class="label">Conflicting File</p>
+                    <h3>report.docx</h3>
+                </div>
+
+            </div>
+
+            <div class="conflict-notice">
+                <h3>Confilct Notice</h3>
+                <p class="description">
+                    This file was modified on more than one device before
+                    synchronization was completed. Choose how you want FileSync
+                    to handle the conflicting versions.
+                </p>
+            </div>
+
+
+            <!-- File Versions -->
+            <div class="conflict-devices">
+
+                <div class="conflict-device">
+
+                    <p class="device-version">
+                        Local Version
+                    </p>
+
+                    <h4>Nisham-PC</h4>
+
+                    <p class="modified-info">
+                        Modified: 9/20/2026 1:41 PM
+                    </p>
+
+                </div>
+
+
+                <div class="conflict-device">
+
+                    <p class="device-version">
+                        Other Version
+                    </p>
+
+                    <h4>Rabindra-PC</h4>
+
+                    <p class="modified-info">
+                        Modified: 9/20/2026 1:43 PM
+                    </p>
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- Bottom Buttons -->
+        <div class="conflict-actions">
+
+            <button class="cancel-button">
+                Cancel
+            </button>
+
+            <button class="both-version-button">
+                Keep Both Versions
+            </button>
+
+        </div>
+
+    </div>
+
+</body>
+
+</html>
