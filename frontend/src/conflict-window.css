@@ -1,0 +1,75 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: #151515;
+    color: #f1f1f1;
+}
+
+.conflict-content {
+    padding: 22px;
+}
+
+.label {
+    margin: 0 0 4px 0;
+    color: #999;
+    font-size: 12px;
+}
+
+.file-info h3 {
+    margin: 0;
+    font-size: 17px;
+}
+
+.conflict-device {
+    padding: 16px;
+    background-color: #292929;
+    border: 1px solid #414141;
+    border-radius: 7px;
+}
+
+.device-version {
+    margin: 0;
+    color: #999;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.modified-info {
+    color: #aaa;
+}
+
+.conflict-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 16px 22px;
+    border-top: 1px solid #444;
+}
+
+.cancel-button,
+.both-version-button {
+    padding: 9px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.cancel-button {
+    background-color: #292929;
+    color: #ddd;
+    border: 1px solid #555;
+}
+
+.cancel-button:hover {
+    background-color: #373737;
+}
+
+.both-version-button:hover {
+    background-color: rgb(192, 192, 192);
+}
