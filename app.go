@@ -2,11 +2,18 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx            context.Context
+	syncFolderPath string
+	fileWatcher    *fsnotify.Watcher
 }
 
 // NewApp creates a new App application struct
@@ -18,4 +25,32 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	// Get the project's current directory
+	getProjectDirectory, projectDirectoryError := os.Getwd()
+
+	if projectDirectoryError != nil {
+		return
+	}
+
+	// Save files inside a dedicated synced files folder
+	a.syncFolderPath = filepath.Join(
+		getProjectDirectory,
+		"Synced Files",
+	)
+
+	// Checking where files is being saved unless lost
+	fmt.Println("Sync folder path:", a.syncFolderPath)
+
+	// Create the folder if it doesn't exist, create a "Synced Files" folder
+	syncFolderCreationError := os.MkdirAll(
+		a.syncFolderPath,
+		0755,
+	)
+
+	// Check error during sync folder creation
+	if syncFolderCreationError != nil {
+		return
+	}
+
 }
