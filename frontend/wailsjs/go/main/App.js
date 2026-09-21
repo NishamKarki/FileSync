@@ -5,3 +5,7 @@
 export function AddFile() {
   return window['go']['main']['App']['AddFile']();
 }
+
+export function PingDevice(arg1) {
+  return window['go']['main']['App']['PingDevice'](arg1);
+}
