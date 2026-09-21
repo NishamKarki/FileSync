@@ -1,5 +1,8 @@
+import { AddFile } from '../wailsjs/go/main/App'; //run the file picking window from filepicker.go
+import { EventsOn } from '../wailsjs/runtime/runtime';
+import './main-window.css'; // CSS Style for this main window
 import './main-window.css'
-import { AddFile, PingDevice } from '../wailsjs/go/main/App'
+import { PingDevice } from '../wailsjs/go/main/App'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="app">
@@ -79,10 +82,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <div class="section activity">
                 <h2>Recent Activity</h2>
 
-                <p><span>1:42</span> report.docx modified</p>
-                <p><span>1:42</span> 1 modified chunk detected</p>
-                <p><span>1:43</span> Synchronization completed</p>
-                <p><span>1:43</span> Integrity verification passed</p>
+                <p id="recent-activity">No Files Modified</p>
             </div>
 
         </section>
@@ -116,6 +116,8 @@ testNetworkPing();
 const selectFileButton = document.getElementById('select-file-button')
 // Use this to replace the "no file selected" with the name of the file selected
 const selectedFileText = document.getElementById('selected-files')
+// Use to populate "Recent activity" section with recently modified files
+const recentFileActivity = document.getElementById('recent-activity')
 
 // Event listener for when user click on "Select File"
 selectFileButton?.addEventListener('click', async () => {
@@ -124,11 +126,19 @@ selectFileButton?.addEventListener('click', async () => {
     // through file picker window
     const selectedFileName = await AddFile()
 
-    // If user canceled or no files were added, return nothing
-    // if (selectedFileName == "") {
-    //     return
-    // }
-
     // Return the name of the file selected and replace "no file selected"
     selectedFileText!.textContent = selectedFileName
 })
+
+let recentActivites: string[] = []
+
+EventsOn('file-change', (modifiedFile: string) => {
+    // Keep the most recent activity on top
+    recentActivites.unshift(modifiedFile)
+
+    recentActivites.forEach((newModification) => {
+
+        recentFileActivity.append(newModification)
+    })
+})
+
