@@ -5,3 +5,11 @@
 export function AddFile() {
   return window['go']['main']['App']['AddFile']();
 }
+
+export function FileWatcher(arg1) {
+  return window['go']['main']['App']['FileWatcher'](arg1);
+}
+
+export function HandleFileEvent(arg1) {
+  return window['go']['main']['App']['HandleFileEvent'](arg1);
+}

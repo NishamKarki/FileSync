@@ -39,18 +39,12 @@ func (a *App) startup(ctx context.Context) {
 		"Synced Files",
 	)
 
-	// Checking where files is being saved unless lost
+	// Checking where the files are being saved in case they are lost
 	fmt.Println("Sync folder path:", a.syncFolderPath)
 
 	// Create the folder if it doesn't exist, create a "Synced Files" folder
-	syncFolderCreationError := os.MkdirAll(
-		a.syncFolderPath,
-		0755,
-	)
+	os.MkdirAll(a.syncFolderPath, 0755)
 
-	// Check error during sync folder creation
-	if syncFolderCreationError != nil {
-		return
-	}
+	a.FileWatcher(a.syncFolderPath)
 
 }
