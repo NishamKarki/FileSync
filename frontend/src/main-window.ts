@@ -97,7 +97,19 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     </div>
 `
 
+async function testNetworkPing() {
+    try {
+        const response = await PingDevice("192.168.1.111:8080");
 
+        console.log("FileSync network test:");
+        console.log(response);
+    }
+    catch (error) {
+        console.error("FileSync ping failed", error);
+    }
+}
+
+testNetworkPing();
 // Makes button clickable by recognizing button id
 const selectFileButton = document.getElementById('select-file-button')
 // Use this to replace the "no file selected" with the name of the file selected

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"FileSyncWails/network"
 	"context"
 	"fmt"
 	"os"
@@ -47,4 +48,15 @@ func (a *App) startup(ctx context.Context) {
 
 	a.FileWatcher(a.syncFolderPath)
 
+	go network.StartServer("8080")
+}
+
+func (a *App) PingDevice(address string) (network.PingResponse, error) {
+	response, err := network.PingDevice(address)
+
+	if err != nil {
+		return network.PingResponse{}, err
+	}
+
+	return *response, nil
 }
