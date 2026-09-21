@@ -5,3 +5,15 @@
 export function AddFile() {
   return window['go']['main']['App']['AddFile']();
 }
+
+export function DiscoverDevices() {
+  return window['go']['main']['App']['DiscoverDevices']();
+}
+
+export function GetLocalIP() {
+  return window['go']['main']['App']['GetLocalIP']();
+}
+
+export function PingDevice(arg1) {
+  return window['go']['main']['App']['PingDevice'](arg1);
+}
