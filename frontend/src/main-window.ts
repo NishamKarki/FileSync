@@ -1,6 +1,8 @@
 import { AddFile } from '../wailsjs/go/main/App'; //run the file picking window from filepicker.go
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import './main-window.css'; // CSS Style for this main window
+import './main-window.css'
+import { PingDevice } from '../wailsjs/go/main/App'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="app">
@@ -97,7 +99,19 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     </div>
 `
 
+async function testNetworkPing() {
+    try {
+        const response = await PingDevice("192.168.1.111:8080");
 
+        console.log("FileSync network test:");
+        console.log(response);
+    }
+    catch (error) {
+        console.error("FileSync ping failed", error);
+    }
+}
+
+testNetworkPing();
 // Makes button clickable by recognizing button id
 const selectFileButton = document.getElementById('select-file-button')
 // Use this to replace the "no file selected" with the name of the file selected
