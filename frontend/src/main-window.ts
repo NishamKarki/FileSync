@@ -1,8 +1,6 @@
-import { AddFile } from '../wailsjs/go/main/App'; //run the file picking window from filepicker.go
+import { AddFile, PingDevice } from '../wailsjs/go/main/App'; //run the file picking window from filepicker.go
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import './main-window.css'; // CSS Style for this main window
-import './main-window.css'
-import { PingDevice } from '../wailsjs/go/main/App'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="app">
@@ -112,6 +110,9 @@ async function testNetworkPing() {
 }
 
 testNetworkPing();
+
+
+///////////// Nisham Karki
 // Makes button clickable by recognizing button id
 const selectFileButton = document.getElementById('select-file-button')
 // Use this to replace the "no file selected" with the name of the file selected
@@ -138,7 +139,7 @@ EventsOn('file-change', (modifiedFile: string) => {
 
     recentActivites.forEach((newModification) => {
 
-        recentFileActivity.append(newModification)
+        recentFileActivity?.append(newModification)
     })
 })
-
+////////////// Nisham Karki

@@ -1,4 +1,4 @@
-(function(){const i=document.createElement("link").relList;if(i&&i.supports&&i.supports("modulepreload"))return;for(const e of document.querySelectorAll('link[rel="modulepreload"]'))d(e);new MutationObserver(e=>{for(const t of e)if(t.type==="childList")for(const s of t.addedNodes)s.tagName==="LINK"&&s.rel==="modulepreload"&&d(s)}).observe(document,{childList:!0,subtree:!0});function o(e){const t={};return e.integrity&&(t.integrity=e.integrity),e.referrerPolicy&&(t.referrerPolicy=e.referrerPolicy),e.crossOrigin==="use-credentials"?t.credentials="include":e.crossOrigin==="anonymous"?t.credentials="omit":t.credentials="same-origin",t}function d(e){if(e.ep)return;e.ep=!0;const t=o(e);fetch(e.href,t)}})();function c(){return window.go.main.App.AddFile()}document.querySelector("#app").innerHTML=`
+(function(){const n=document.createElement("link").relList;if(n&&n.supports&&n.supports("modulepreload"))return;for(const e of document.querySelectorAll('link[rel="modulepreload"]'))c(e);new MutationObserver(e=>{for(const i of e)if(i.type==="childList")for(const o of i.addedNodes)o.tagName==="LINK"&&o.rel==="modulepreload"&&c(o)}).observe(document,{childList:!0,subtree:!0});function s(e){const i={};return e.integrity&&(i.integrity=e.integrity),e.referrerPolicy&&(i.referrerPolicy=e.referrerPolicy),e.crossOrigin==="use-credentials"?i.credentials="include":e.crossOrigin==="anonymous"?i.credentials="omit":i.credentials="same-origin",i}function c(e){if(e.ep)return;e.ep=!0;const i=s(e);fetch(e.href,i)}})();function r(){return window.go.main.App.AddFile()}function l(t){return window.go.main.App.PingDevice(t)}function a(t,n,s){return window.runtime.EventsOnMultiple(t,n,s)}function u(t,n){return a(t,n,-1)}document.querySelector("#app").innerHTML=`
     <div class="app">
 
         <header class="title">
@@ -76,10 +76,7 @@
             <div class="section activity">
                 <h2>Recent Activity</h2>
 
-                <p id=><span>1:42</span> report.docx modified</p>
-                <p><span>1:42</span> 1 modified chunk detected</p>
-                <p><span>1:43</span> Synchronization completed</p>
-                <p><span>1:43</span> Integrity verification passed</p>
+                <p id="recent-activity">No Files Modified</p>
             </div>
 
         </section>
@@ -94,4 +91,4 @@
         </footer>
 
     </div>
-`;const r=document.getElementById("select-file-button"),l=document.getElementById("selected-files");r?.addEventListener("click",async()=>{const n=await c();l.textContent=n});
+`;async function f(){try{const t=await l("192.168.1.111:8080");console.log("FileSync network test:"),console.log(t)}catch(t){console.error("FileSync ping failed",t)}}f();const p=document.getElementById("select-file-button"),h=document.getElementById("selected-files"),v=document.getElementById("recent-activity");p?.addEventListener("click",async()=>{const t=await r();h.textContent=t});let d=[];u("file-change",t=>{d.unshift(t),d.forEach(n=>{v?.append(n)})});
