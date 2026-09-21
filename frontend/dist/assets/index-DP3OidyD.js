@@ -1,7 +1,4 @@
-import './main-window.css'
-import { AddFile, PingDevice } from '../wailsjs/go/main/App'
-
-document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
+(function(){const i=document.createElement("link").relList;if(i&&i.supports&&i.supports("modulepreload"))return;for(const e of document.querySelectorAll('link[rel="modulepreload"]'))d(e);new MutationObserver(e=>{for(const t of e)if(t.type==="childList")for(const s of t.addedNodes)s.tagName==="LINK"&&s.rel==="modulepreload"&&d(s)}).observe(document,{childList:!0,subtree:!0});function o(e){const t={};return e.integrity&&(t.integrity=e.integrity),e.referrerPolicy&&(t.referrerPolicy=e.referrerPolicy),e.crossOrigin==="use-credentials"?t.credentials="include":e.crossOrigin==="anonymous"?t.credentials="omit":t.credentials="same-origin",t}function d(e){if(e.ep)return;e.ep=!0;const t=o(e);fetch(e.href,t)}})();function c(){return window.go.main.App.AddFile()}document.querySelector("#app").innerHTML=`
     <div class="app">
 
         <header class="title">
@@ -97,38 +94,4 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         </footer>
 
     </div>
-`
-
-async function testNetworkPing() {
-    try {
-        const response = await PingDevice("192.168.1.111:8080");
-
-        console.log("FileSync network test:");
-        console.log(response);
-    }
-    catch (error) {
-        console.error("FileSync ping failed", error);
-    }
-}
-
-testNetworkPing();
-// Makes button clickable by recognizing button id
-const selectFileButton = document.getElementById('select-file-button')
-// Use this to replace the "no file selected" with the name of the file selected
-const selectedFileText = document.getElementById('selected-files')
-
-// Event listener for when user click on "Select File"
-selectFileButton?.addEventListener('click', async () => {
-
-    // Call the AddFile() function and get the name of the file selected
-    // through file picker window
-    const selectedFileName = await AddFile()
-
-    // If user canceled or no files were added, return nothing
-    // if (selectedFileName == "") {
-    //     return
-    // }
-
-    // Return the name of the file selected and replace "no file selected"
-    selectedFileText!.textContent = selectedFileName
-})
+`;const r=document.getElementById("select-file-button"),l=document.getElementById("selected-files");r?.addEventListener("click",async()=>{const n=await c();l.textContent=n});
