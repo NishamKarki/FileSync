@@ -1,4 +1,5 @@
 import './main-window.css'
+import {PingDevice} from '../wailsjs/go/main/App';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 <div class="app">
@@ -97,3 +98,18 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
 </div>
 `
+
+async function testNetworkPing() {
+    try {
+        const response = await PingDevice("192.168.1.111:8080");
+
+        console.log("FileSync network test:");
+        console.log(response);
+    }
+    catch (error) {
+        console.error("FileSync ping failed", error);
+
+    }
+}
+
+testNetworkPing();

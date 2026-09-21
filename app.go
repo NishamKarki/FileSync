@@ -1,6 +1,7 @@
 package main
 
 import (
+	"FileSyncWails/network"
 	"context"
 )
 
@@ -18,4 +19,16 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	go network.StartServer("8080")
+}
+
+func (a *App) PingDevice(address string) (network.PingResponse, error) {
+	response, err := network.PingDevice(address)
+
+	if err != nil {
+		return network.PingResponse{}, err
+	}
+
+	return *response, nil
 }
