@@ -6,8 +6,16 @@ export function AddFile() {
   return window['go']['main']['App']['AddFile']();
 }
 
+export function DiscoverDevices() {
+  return window['go']['main']['App']['DiscoverDevices']();
+}
+
 export function FileWatcher(arg1) {
   return window['go']['main']['App']['FileWatcher'](arg1);
+}
+
+export function GetLocalIP() {
+  return window['go']['main']['App']['GetLocalIP']();
 }
 
 export function HandleFileEvent(arg1) {

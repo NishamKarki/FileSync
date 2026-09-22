@@ -90,6 +90,10 @@ button:hover {
     width: 50px;
 }
 
+#recent-activity {
+    white-space: pre-line;
+}
+
 .footer {
     display: flex;
     justify-content: space-between;
