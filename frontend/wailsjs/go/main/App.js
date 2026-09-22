@@ -14,6 +14,13 @@ export function GetLocalIP() {
   return window['go']['main']['App']['GetLocalIP']();
 }
 
+export function FileWatcher(arg1) {
+  return window['go']['main']['App']['FileWatcher'](arg1);
+}
+
+export function HandleFileEvent(arg1) {
+  return window['go']['main']['App']['HandleFileEvent'](arg1);
+  
 export function PingDevice(arg1) {
   return window['go']['main']['App']['PingDevice'](arg1);
 }
