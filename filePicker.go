@@ -14,7 +14,7 @@ import (
 func (app *App) AddFile() string {
 
 	// Open file picker widow
-	selectFilePath, filePickingError := runtime.OpenFileDialog(
+	selectFile, filePickingError := runtime.OpenFileDialog(
 		app.ctx,
 		runtime.OpenDialogOptions{
 			Title: "Select a file to add to FileSync",
@@ -27,12 +27,12 @@ func (app *App) AddFile() string {
 	}
 
 	// If user cancels, return nothing
-	if selectFilePath == "" {
+	if selectFile == "" {
 		return ""
 	}
 
 	// Get selected file name
-	fileName := filepath.Base(selectFilePath)
+	fileName := filepath.Base(selectFile)
 
 	// Create destination path for files to sync
 	destinationFilePath := filepath.Join(
@@ -56,7 +56,7 @@ func (app *App) AddFile() string {
 
 	// Open original file
 	sourceFile, sourceFileOpenError :=
-		os.Open(selectFilePath)
+		os.Open(selectFile)
 
 	if sourceFileOpenError != nil {
 		return ""

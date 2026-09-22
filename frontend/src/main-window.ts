@@ -1,9 +1,8 @@
-import { AddFile } from '../wailsjs/go/main/App'; //run the file picking window from filepicker.go
+// AddFile runs the file picking window from filepicker.go
+import { AddFile, DiscoverDevices, GetLocalIP } from '../wailsjs/go/main/App';
+// EventsOn calls runtime event from file modification detected by fileWatcher.go
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import './main-window.css'; // CSS Style for this main window
-import './main-window.css'
-import { GetLocalIP, DiscoverDevices } from '../wailsjs/go/main/App'
-import { PingDevice } from '../wailsjs/go/main/App'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="app">
@@ -118,7 +117,7 @@ async function testDiscoverDevices() {
         console.log("Searching for FileSync devices on LAN...")
 
         const devices = await DiscoverDevices()
-        
+
         console.log("FileSync devices Found:")
         console.log(devices);
     }
@@ -128,6 +127,8 @@ async function testDiscoverDevices() {
 }
 testDiscoverDevices();
 
+
+///// Nisham Karki
 // Makes button clickable by recognizing button id
 const selectFileButton = document.getElementById('select-file-button')
 // Use this to replace the "no file selected" with the name of the file selected
@@ -146,15 +147,19 @@ selectFileButton?.addEventListener('click', async () => {
     selectedFileText!.textContent = selectedFileName
 })
 
+// Array to store list of recent activities
 let recentActivites: string[] = []
 
 EventsOn('file-change', (modifiedFile: string) => {
     // Keep the most recent activity on top
     recentActivites.unshift(modifiedFile)
 
-    recentActivites.forEach((newModification) => {
+    // Keep only 5 most recent activities at a time.
+    // We will show only the 5 most recent activites for now
+    recentActivites = recentActivites.slice(0, 5)
 
-        recentFileActivity.append(newModification)
-    })
+    // THis will replace the currently displayed activities with any newer activity
+    if (recentFileActivity) {
+        recentFileActivity.textContent = recentActivites.join('\n')
+    }
 })
-

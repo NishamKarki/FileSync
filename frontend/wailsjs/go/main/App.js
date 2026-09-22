@@ -10,17 +10,18 @@ export function DiscoverDevices() {
   return window['go']['main']['App']['DiscoverDevices']();
 }
 
-export function GetLocalIP() {
-  return window['go']['main']['App']['GetLocalIP']();
-}
-
 export function FileWatcher(arg1) {
   return window['go']['main']['App']['FileWatcher'](arg1);
 }
 
+export function GetLocalIP() {
+  return window['go']['main']['App']['GetLocalIP']();
+}
+
 export function HandleFileEvent(arg1) {
   return window['go']['main']['App']['HandleFileEvent'](arg1);
-  
+}
+
 export function PingDevice(arg1) {
   return window['go']['main']['App']['PingDevice'](arg1);
 }
