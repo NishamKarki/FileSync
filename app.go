@@ -51,12 +51,23 @@ func (a *App) startup(ctx context.Context) {
 	go network.StartServer("8080")
 }
 
+// PingDevice pings a device at the specified address
 func (a *App) PingDevice(address string) (network.PingResponse, error) {
 	response, err := network.PingDevice(address)
-
+	// Check for error during ping
 	if err != nil {
 		return network.PingResponse{}, err
 	}
 
 	return *response, nil
+}
+
+// GetLocalIP retrieves the local IP address of the machine
+func (a *App) GetLocalIP() (string, error) {
+	return network.GetLocalIP()
+}
+
+// DiscoverDevices discovers devices on the local network
+func (a *App) DiscoverDevices() []string {
+	return network.DiscoverDevices()
 }

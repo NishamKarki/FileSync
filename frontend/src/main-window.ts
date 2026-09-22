@@ -2,6 +2,7 @@ import { AddFile } from '../wailsjs/go/main/App'; //run the file picking window 
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import './main-window.css'; // CSS Style for this main window
 import './main-window.css'
+import { GetLocalIP, DiscoverDevices } from '../wailsjs/go/main/App'
 import { PingDevice } from '../wailsjs/go/main/App'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -98,20 +99,35 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     </div>
 `
-
-async function testNetworkPing() {
+// Test the GetLocalIP function and log the result
+async function testLocalIP() {
     try {
-        const response = await PingDevice("192.168.1.111:8080");
-
-        console.log("FileSync network test:");
-        console.log(response);
+        const localIP = await GetLocalIP();
+        console.log("FileSync local IP address:");
+        console.log(localIP);
     }
     catch (error) {
-        console.error("FileSync ping failed", error);
+        console.error("FileSync failed to get local IP address", error);
     }
 }
+testLocalIP();
 
-testNetworkPing();
+// Test the DiscoverDevices function and log the result
+async function testDiscoverDevices() {
+    try {
+        console.log("Searching for FileSync devices on LAN...")
+
+        const devices = await DiscoverDevices()
+        
+        console.log("FileSync devices Found:")
+        console.log(devices);
+    }
+    catch (error) {
+        console.error("FileSync failed to discover devices", error);
+    }
+}
+testDiscoverDevices();
+
 // Makes button clickable by recognizing button id
 const selectFileButton = document.getElementById('select-file-button')
 // Use this to replace the "no file selected" with the name of the file selected

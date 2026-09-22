@@ -6,6 +6,10 @@ import {network} from '../models';
 
 export function AddFile():Promise<string>;
 
+export function DiscoverDevices():Promise<Array<string>>;
+
+export function GetLocalIP():Promise<string>;
+
 export function FileWatcher(arg1:string):Promise<void>;
 
 export function HandleFileEvent(arg1:fsnotify.Event):Promise<void>;
