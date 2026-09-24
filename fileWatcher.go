@@ -56,6 +56,11 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	// Check for Files Write (modified) event
 	if fileWatcherEvent.Op == fsnotify.Write {
 		fmt.Println("WRITE:", fileName)
+
+		// Run file chunking when a file is modified
+		// Copying a file into Synced File also trigger Write event
+		app.ChunkFile(fileWatcherEvent.Name)
+
 		// Return the file modified event
 		runtime.EventsEmit(
 			app.ctx, "file-change", "Modified: "+fileName,

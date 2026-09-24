@@ -6,6 +6,10 @@ export function AddFile() {
   return window['go']['main']['App']['AddFile']();
 }
 
+export function ChunkFile(arg1) {
+  return window['go']['main']['App']['ChunkFile'](arg1);
+}
+
 export function DiscoverDevices() {
   return window['go']['main']['App']['DiscoverDevices']();
 }

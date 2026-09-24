@@ -17,6 +17,25 @@ export namespace fsnotify {
 
 }
 
+export namespace main {
+	
+	export class Chunk {
+	    Index: number;
+	    Data: number[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Chunk(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Index = source["Index"];
+	        this.Data = source["Data"];
+	    }
+	}
+
+}
+
 export namespace network {
 	
 	export class PingResponse {
