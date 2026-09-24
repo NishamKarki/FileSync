@@ -25,3 +25,7 @@ export function HandleFileEvent(arg1) {
 export function PingDevice(arg1) {
   return window['go']['main']['App']['PingDevice'](arg1);
 }
+
+export function SendFile(arg1, arg2) {
+  return window['go']['main']['App']['SendFile'](arg1, arg2);
+}

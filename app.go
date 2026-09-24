@@ -51,6 +51,7 @@ func (a *App) startup(ctx context.Context) {
 	go network.StartServer("8080")
 }
 
+// /Rabindra Neupane
 // PingDevice pings a device at the specified address
 func (a *App) PingDevice(address string) (network.PingResponse, error) {
 	response, err := network.PingDevice(address)
@@ -62,12 +63,22 @@ func (a *App) PingDevice(address string) (network.PingResponse, error) {
 	return *response, nil
 }
 
+// /Rabindra Neupane
 // GetLocalIP retrieves the local IP address of the machine
 func (a *App) GetLocalIP() (string, error) {
 	return network.GetLocalIP()
 }
 
+// /Rabindra Neupane
 // DiscoverDevices discovers devices on the local network
-func (a *App) DiscoverDevices() []string {
+func (a *App) DiscoverDevices() []network.Device {
 	return network.DiscoverDevices()
+}
+
+// /Rabindra Neupane
+// SendFile sends a file to another FileSync device on the network
+func (a *App) SendFile(address string, fileName string) error {
+	filePath := filepath.Join(a.syncFolderPath, fileName)
+
+	return network.SendFile(address, filePath)
 }
