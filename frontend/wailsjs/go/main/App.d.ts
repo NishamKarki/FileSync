@@ -17,3 +17,5 @@ export function GetLocalIP():Promise<string>;
 export function HandleFileEvent(arg1:fsnotify.Event):Promise<void>;
 
 export function PingDevice(arg1:string):Promise<network.PingResponse>;
+
+export function SendFile(arg1:string,arg2:string):Promise<void>;
