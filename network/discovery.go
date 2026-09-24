@@ -1,3 +1,4 @@
+// /Rabindra Neupane
 package network
 
 import (
@@ -21,25 +22,25 @@ func GetLocalIP() (string, error) {
 }
 
 // DiscoverDevices discovers devices on the local network
-func DiscoverDevices() []string {
+func DiscoverDevices() []Device {
 	// Implementation for device discovery
 	localIP, err := GetLocalIP()
 	if err != nil {
 		fmt.Println("Could not get local IP address:", err)
-		return []string{}
+		return []Device{}
 	}
 	// Parse the local IP address to get the network prefix
 	ip := net.ParseIP(localIP).To4()
 	if ip == nil {
 		fmt.Println("Could not parse local IPv4 address:", localIP)
-		return []string{}
+		return []Device{}
 	}
-
-	results := make(chan string, 254)
+	//channel to collect the results from the ping goroutines
+	results := make(chan Device, 254)
 
 	// Scan the local network for devices
 	for i := 1; i <= 254; i++ {
-		address := fmt.Sprintf(
+		deviceIP := fmt.Sprintf(
 			"%d.%d.%d.%d",
 			ip[0],
 			ip[1],
@@ -47,7 +48,7 @@ func DiscoverDevices() []string {
 			i)
 
 		// Skip the local device itself
-		if address == localIP {
+		if deviceIP == localIP {
 			continue
 		}
 
@@ -57,20 +58,27 @@ func DiscoverDevices() []string {
 			response, err := PingDevice(deviceAddress)
 			// Check if the ping was successful and the device is online
 			if err == nil && response.Success {
-				fmt.Println("FileSync device found:", deviceAddress)
-				results <- deviceAddress
+				device := Device{
+					Name:   response.DeviceName,
+					IP:     deviceIP,
+					Port:   8080,
+					Online: true,
+				}
+
+				fmt.Println("FileSync device found:", device.Name, device.IP)
+				results <- device
 				return
 			}
 			// If the ping failed or the device is offline, send an empty string to the results channel
-			results <- ""
-		}(address)
+			results <- Device{}
+		}(deviceIP)
 	}
 	// Collect the results from the goroutines
-	devices := make([]string, 0)
+	devices := make([]Device, 0)
 	// Wait for all goroutines to finish and collect the results
 	for i := 0; i < 253; i++ {
 		device := <-results
-		if device != "" {
+		if device.IP != "" {
 			devices = append(devices, device)
 		}
 	}
