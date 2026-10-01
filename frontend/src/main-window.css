@@ -83,6 +83,12 @@ button:hover {
     align-items: center;
     gap: 5px;
     margin: 13px 0;
+    cursor: pointer;
+}
+
+.device.selected-device {
+    border: 2px solid;
+    border-radius: 6px;
 }
 
 .activity p span {

@@ -43,7 +43,7 @@ func (app *App) ChunkFile(filePath string) []Chunk {
 	ChunkIndex := 0
 
 	for {
-		// Create a temporary storage to hold a chunk
+		// Create an empty temporary storage to hold a chunk
 		chunkBuffer := make([]byte, chunkSize)
 
 		// Read only up to the fixed size of the chunk from the file
@@ -64,7 +64,7 @@ func (app *App) ChunkFile(filePath string) []Chunk {
 			// Add the chunk to the chunk list
 			fileChunks = append(fileChunks, newChunk)
 
-			// Printing for testing
+			// Testing total chunks gotten
 			fmt.Println("Chunk: ", ChunkIndex, "\nBytes read: ", totalBytesRead)
 		}
 
@@ -84,6 +84,7 @@ func (app *App) ChunkFile(filePath string) []Chunk {
 		fmt.Println("")
 	}
 
+	// Total chunks
 	fmt.Println("\nFile size: ", fileInfo.Size(),
 		"\nTotal Chunks gotten: ", len(fileChunks))
 
