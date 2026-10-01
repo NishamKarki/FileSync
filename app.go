@@ -3,6 +3,7 @@ package main
 import (
 	"FileSyncWails/network"
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ type App struct {
 	syncFolderPath   string
 	fileWatcher      *fsnotify.Watcher
 	chunkStoragePath string
+	db               *sql.DB
 }
 
 // NewApp creates a new App application struct
@@ -50,19 +52,23 @@ func (a *App) startup(ctx context.Context) {
 	// while the group and others can read and execute but cannot write
 	os.MkdirAll(a.syncFolderPath, 0755)
 
-	// Create "File Chunks" folder, if it doesn't already exist
-	os.MkdirAll(a.syncFolderPath, 0755)
-
-	// Initialize FileWatcher function at program startup
-	a.FileWatcher(a.syncFolderPath)
-
 	// Create path to save chunks inside "File Chunks" folder
 	a.chunkStoragePath = filepath.Join(
 		getProjectDirectory,
 		"File Chunks",
 	)
-
 	os.MkdirAll(a.chunkStoragePath, 0755)
+
+	// Set up the metadata database
+	db, dbError := InitDatabase(a.syncFolderPath)
+	if dbError != nil {
+		fmt.Println("Database setup failed:", dbError)
+		return
+	}
+	a.db = db
+
+	// Initialize FileWatcher function at program startup
+	a.FileWatcher(a.syncFolderPath)
 
 	go network.StartServer("8080")
 }

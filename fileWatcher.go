@@ -3,6 +3,7 @@
 package main
 
 import (
+	"FileSyncWails/network"
 	"fmt"
 	"path/filepath"
 
@@ -48,6 +49,12 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	if fileWatcherEvent.Op == fsnotify.Create {
 		fmt.Println("CREATE:", fileName)
 
+		deviceID, _ := network.GetLocalIP()
+		recordError := RecordFileVersion(app.db, app.syncFolderPath, fileWatcherEvent.Name, deviceID)
+		if recordError != nil {
+			fmt.Println("Failed to record file version:", recordError)
+		}
+
 		// Return the file created event
 		runtime.EventsEmit(
 			app.ctx, "file-change", "Created: "+fileName,
@@ -57,15 +64,11 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	if fileWatcherEvent.Op == fsnotify.Write {
 		fmt.Println("WRITE:", fileName)
 
-		// Run file chunking when a file is modified
-		// Copying a file into Synced File also trigger Write event
-		app.ChunkFile(fileWatcherEvent.Name)
-
-		// Save the chunked file data when the file watcher detects
-		// file creation and modification event
-		chunks := app.ChunkFile(fileWatcherEvent.Name)
-
-		app.SaveChunks(fileWatcherEvent.Name, chunks)
+		deviceID, _ := network.GetLocalIP()
+		recordError := RecordFileVersion(app.db, app.syncFolderPath, fileWatcherEvent.Name, deviceID)
+		if recordError != nil {
+			fmt.Println("Failed to record file version:", recordError)
+		}
 
 		// Return the file modified event
 		runtime.EventsEmit(
@@ -83,6 +86,10 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	// Check for Files delete event
 	if fileWatcherEvent.Op == fsnotify.Remove {
 		fmt.Println("REMOVE:", fileName)
+
+		relativePath, _ := filepath.Rel(app.syncFolderPath, fileWatcherEvent.Name)
+		app.db.Exec("DELETE FROM files WHERE id = ?", relativePath)
+
 		// Return the file deleted event
 		runtime.EventsEmit(
 			app.ctx, "file-change", "Removed: "+fileName,
