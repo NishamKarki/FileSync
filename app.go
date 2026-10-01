@@ -12,9 +12,10 @@ import (
 
 // App struct
 type App struct {
-	ctx            context.Context
-	syncFolderPath string
-	fileWatcher    *fsnotify.Watcher
+	ctx              context.Context
+	syncFolderPath   string
+	fileWatcher      *fsnotify.Watcher
+	chunkStoragePath string
 }
 
 // NewApp creates a new App application struct
@@ -31,10 +32,10 @@ func (a *App) startup(ctx context.Context) {
 	getProjectDirectory, projectDirectoryError := os.Getwd()
 
 	if projectDirectoryError != nil {
-		return
+		fmt.Println("Error getting project directory: ", projectDirectoryError)
 	}
 
-	// Save files inside a dedicated synced files folder
+	// Create to Save files inside a dedicated synced files folder
 	a.syncFolderPath = filepath.Join(
 		getProjectDirectory,
 		"Synced Files",
@@ -44,9 +45,24 @@ func (a *App) startup(ctx context.Context) {
 	fmt.Println("Sync folder path:", a.syncFolderPath)
 
 	// Create the folder if it doesn't exist, create a "Synced Files" folder
+	// 0755: File Permission.
+	// The file owner (Owner) can read, write, and execute,
+	// while the group and others can read and execute but cannot write
 	os.MkdirAll(a.syncFolderPath, 0755)
 
+	// Create "File Chunks" folder, if it doesn't already exist
+	os.MkdirAll(a.syncFolderPath, 0755)
+
+	// Initialize FileWatcher function at program startup
 	a.FileWatcher(a.syncFolderPath)
+
+	// Create path to save chunks inside "File Chunks" folder
+	a.chunkStoragePath = filepath.Join(
+		getProjectDirectory,
+		"File Chunks",
+	)
+
+	os.MkdirAll(a.chunkStoragePath, 0755)
 
 	go network.StartServer("8080")
 }
