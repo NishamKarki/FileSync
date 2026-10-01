@@ -6,6 +6,10 @@ export function AddFile() {
   return window['go']['main']['App']['AddFile']();
 }
 
+export function ChunkFile(arg1) {
+  return window['go']['main']['App']['ChunkFile'](arg1);
+}
+
 export function DiscoverDevices() {
   return window['go']['main']['App']['DiscoverDevices']();
 }
@@ -24,6 +28,10 @@ export function HandleFileEvent(arg1) {
 
 export function PingDevice(arg1) {
   return window['go']['main']['App']['PingDevice'](arg1);
+}
+
+export function SaveChunks(arg1, arg2) {
+  return window['go']['main']['App']['SaveChunks'](arg1, arg2);
 }
 
 export function SendFile(arg1, arg2) {
