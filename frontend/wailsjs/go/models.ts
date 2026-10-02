@@ -22,6 +22,7 @@ export namespace main {
 	export class Chunk {
 	    Index: number;
 	    Data: number[];
+	    Hash: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Chunk(source);
@@ -31,6 +32,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Index = source["Index"];
 	        this.Data = source["Data"];
+	        this.Hash = source["Hash"];
 	    }
 	}
 

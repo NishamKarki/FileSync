@@ -1,6 +1,7 @@
 package main
 
 import (
+	sha256 "crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -22,6 +23,7 @@ const chunkSize = 1024
 type Chunk struct {
 	Index int
 	Data  []byte
+	Hash  string
 }
 
 // Function that divides a file into chunks
@@ -35,6 +37,7 @@ func (app *App) ChunkFile(filePath string) []Chunk {
 	// Check error during file opening
 	if fileOpenError != nil {
 		fmt.Print("File opening error: ", fileOpenError)
+		return fileChunks
 	}
 
 	defer fileToChunk.Close()
@@ -53,13 +56,17 @@ func (app *App) ChunkFile(filePath string) []Chunk {
 
 			// Create chunk data that contains only the byte that were read from the file
 			chunkData := make([]byte, totalBytesRead)
+			chunkHash := sha256.Sum256(chunkData)
 
 			// Use string slicing to slice the chunked portion from the buffer
 			// and store it into chunkData
 			copy(chunkData, chunkBuffer[:totalBytesRead])
 
 			// Create the chunk
-			newChunk := Chunk{Index: ChunkIndex, Data: chunkData}
+			newChunk := Chunk{
+				Index: ChunkIndex,
+				Data:  chunkData,
+				Hash:  fmt.Sprintf("%x", chunkHash)}
 
 			// Add the chunk to the chunk list
 			fileChunks = append(fileChunks, newChunk)
@@ -74,8 +81,11 @@ func (app *App) ChunkFile(filePath string) []Chunk {
 		// EOF means file chunking is complete
 		if fileReadingError == io.EOF {
 			break
-		} else {
+		}
+
+		if fileReadingError != nil {
 			fmt.Println("File reading error: ", fileReadingError)
+			break
 		}
 	}
 

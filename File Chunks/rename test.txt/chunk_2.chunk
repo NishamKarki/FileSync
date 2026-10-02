@@ -1,0 +1,7 @@
+         1                                                                 * 
+                                                        OrderID                       integer                                                                         OrderID                integer 
+Phone                    varchar(20)                 *                                                           ProductType              varchar(50) 
+                                                        UserID                    integer                                                                             Status             varchar(50) 
+Role                 varchar(20)                                                                                 ProductLink                 varchar(255) 
+                                                        OrderDate                  timestamp                                                                          Comment                        text 
+CreatedAt                 timestamp

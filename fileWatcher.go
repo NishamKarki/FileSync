@@ -4,7 +4,10 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -44,34 +47,62 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	// Get file name for most recently modified file
 	fileName := filepath.Base(fileWatcherEvent.Name)
 
+	// ~WRD1483.tmp, ~$ple situtaiton.docx, ~$arkiNI.docx
+	// The above are the temporary files created by application during modification
+	// Ignore temporary files created
+	if strings.HasPrefix(fileName, "~") {
+		fmt.Println("IGNORED temporary file:", fileName)
+		return
+	}
+
+	// // Ignore .~tmp files
+	if strings.HasSuffix(fileName, ".~tmp") {
+		fmt.Println("IGNORED temporary file:", fileName)
+		return
+	}
+
+	// Ignore .TMP and .tmp files
+	if strings.ToLower(filepath.Ext(fileName)) == ".tmp" {
+		fmt.Println("IGNORED temporary file:", fileName)
+		return
+	}
+
 	// Check for Files create event
 	if fileWatcherEvent.Op == fsnotify.Create {
 		fmt.Println("CREATE:", fileName)
+
+		app.ScheduleFileProcessing(
+			fileWatcherEvent.Name,
+		)
 
 		// Return the file created event
 		runtime.EventsEmit(
 			app.ctx, "file-change", "Created: "+fileName,
 		)
 	}
+
 	// Check for Files Write (modified) event
 	if fileWatcherEvent.Op == fsnotify.Write {
 		fmt.Println("WRITE:", fileName)
 
-		// Run file chunking when a file is modified
-		// Copying a file into Synced File also trigger Write event
-		app.ChunkFile(fileWatcherEvent.Name)
+		// // Run file chunking when a file is modified
+		// // Copying a file into Synced File also trigger Write event
+		// // Save the chunked file data when the file watcher detects
+		// // file creation and modification event
+		// chunks := app.ChunkFile(fileWatcherEvent.Name)
 
-		// Save the chunked file data when the file watcher detects
-		// file creation and modification event
-		chunks := app.ChunkFile(fileWatcherEvent.Name)
+		// app.SaveChunks(fileWatcherEvent.Name, chunks)
 
-		app.SaveChunks(fileWatcherEvent.Name, chunks)
+		app.ScheduleFileProcessing(
+			fileWatcherEvent.Name,
+		)
 
 		// Return the file modified event
 		runtime.EventsEmit(
 			app.ctx, "file-change", "Modified: "+fileName,
 		)
 	}
+
 	// Check for Files rename event
 	if fileWatcherEvent.Op == fsnotify.Rename {
 		fmt.Println("RENAME:", fileName)
@@ -80,6 +111,7 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 			app.ctx, "file-change", "Renamed: "+fileName,
 		)
 	}
+
 	// Check for Files delete event
 	if fileWatcherEvent.Op == fsnotify.Remove {
 		fmt.Println("REMOVE:", fileName)
@@ -89,4 +121,59 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 		)
 	}
 
+}
+
+func (app *App) ScheduleFileProcessing(filePath string) {
+
+	app.timerMutex.Lock()
+
+	// Check if the file already has a timer
+	existingTimer, timerExists := app.fileTimers[filePath]
+
+	if timerExists {
+		// File has changed so stop the old timer
+		existingTimer.Stop()
+	}
+
+	// Create a new timer
+	app.fileTimers[filePath] = time.AfterFunc(
+		700*time.Millisecond,
+		func() {
+
+			// Remove this timer from the map
+			app.timerMutex.Lock()
+			delete(app.fileTimers, filePath)
+			app.timerMutex.Unlock()
+
+			// Check if file still exists
+			fileInfo, fileCheckerError := os.Stat(filePath)
+
+			if fileCheckerError != nil {
+				fmt.Println(
+					"File no longer exists:",
+					filepath.Base(filePath),
+				)
+				return
+			}
+
+			// Ignore directories
+			if fileInfo.IsDir() {
+				return
+			}
+
+			fmt.Println(
+				"PROCESSING:",
+				filepath.Base(filePath),
+			)
+
+			chunks := app.ChunkFile(filePath)
+
+			app.SaveChunks(
+				filePath,
+				chunks,
+			)
+		},
+	)
+
+	app.timerMutex.Unlock()
 }
