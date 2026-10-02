@@ -34,6 +34,10 @@ export function SaveChunks(arg1, arg2) {
   return window['go']['main']['App']['SaveChunks'](arg1, arg2);
 }
 
+export function ScheduleFileProcessing(arg1) {
+  return window['go']['main']['App']['ScheduleFileProcessing'](arg1);
+}
+
 export function SendFile(arg1, arg2) {
   return window['go']['main']['App']['SendFile'](arg1, arg2);
 }
