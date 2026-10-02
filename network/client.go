@@ -115,6 +115,12 @@ func SendChunk(address string, fileName string, chunkIndex int, totalChunks int,
 		return err
 	}
 
+	// Send the total number of chunks being sent
+	err = writer.WriteField("totalChunks", fmt.Sprintf("%d", totalChunks))
+	if err != nil {
+		return err
+	}
+
 	// Send the SHA-256 hash of the chunk so the receiving device can verify its integrity
 	err = writer.WriteField("chunkHash", chunkHash)
 	if err != nil {

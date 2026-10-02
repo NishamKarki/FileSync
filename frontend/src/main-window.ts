@@ -86,7 +86,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
         <footer class="footer">
             <button id="sync-now-button">Sync Now</button>
-            <button id="test-chunk-button">Send All Chunk</button>
+            <button id="send-all-chunks-button">Send All Chunk</button>
 
             <div>
                 <button>Conflicts</button>
@@ -360,7 +360,7 @@ sendAllChunksButton?.addEventListener('click', async () => {
     catch (error) {
         console.error("Failed to send all chunks:", error);
         if (recentFileActivity) {
-            recentFileActivity.textContent = `Failed to send all chunks of ${selectedFileName}.`;
+            recentFileActivity.textContent = `Failed to send all chunks of ${selectedFileName}: ${error}`;
         }
     }
 });

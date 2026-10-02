@@ -35,9 +35,11 @@ func DiscoverDevices() []Device {
 		fmt.Println("Could not parse local IPv4 address:", localIP)
 		return []Device{}
 	}
+
+	MarkAllDevicesOffline()
+
 	//channel to collect the results from the ping goroutines
 	results := make(chan Device, 254)
-
 	// Scan the local network for devices
 	for i := 1; i <= 254; i++ {
 		deviceIP := fmt.Sprintf(
@@ -65,6 +67,8 @@ func DiscoverDevices() []Device {
 					Online: true,
 				}
 
+				RegisterDevice(response.DeviceName, device.IP, "8080")
+
 				fmt.Println("FileSync device found:", device.Name, device.IP)
 				results <- device
 				return
@@ -82,5 +86,18 @@ func DiscoverDevices() []Device {
 			devices = append(devices, device)
 		}
 	}
+
+	// Print the device registry to the console
+	fmt.Println("-----FileSync Device Registry-----")
+	for _, registeredDevice := range GetRegisteredDevices() {
+		fmt.Printf("Device: %s | IP: %s | Port: %s | Online: %t | Last Seen: %s\n",
+			registeredDevice.Name,
+			registeredDevice.IP,
+			registeredDevice.Port,
+			registeredDevice.Online,
+			registeredDevice.LastSeen.Format("2006-01-02 15:04:05"))
+	}
+	fmt.Println("-----------------------------------")
+
 	return devices
 }
