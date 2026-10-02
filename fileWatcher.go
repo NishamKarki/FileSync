@@ -3,6 +3,7 @@
 package main
 
 import (
+	"FileSyncWails/network"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -55,7 +56,7 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 		return
 	}
 
-	// // Ignore .~tmp files
+	// Ignore .~tmp files
 	if strings.HasSuffix(fileName, ".~tmp") {
 		fmt.Println("IGNORED temporary file:", fileName)
 		return
@@ -85,14 +86,6 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	if fileWatcherEvent.Op == fsnotify.Write {
 		fmt.Println("WRITE:", fileName)
 
-		// // Run file chunking when a file is modified
-		// // Copying a file into Synced File also trigger Write event
-		// // Save the chunked file data when the file watcher detects
-		// // file creation and modification event
-		// chunks := app.ChunkFile(fileWatcherEvent.Name)
-
-		// app.SaveChunks(fileWatcherEvent.Name, chunks)
-
 		app.ScheduleFileProcessing(
 			fileWatcherEvent.Name,
 		)
@@ -115,6 +108,10 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	// Check for Files delete event
 	if fileWatcherEvent.Op == fsnotify.Remove {
 		fmt.Println("REMOVE:", fileName)
+
+		relativePath, _ := filepath.Rel(app.syncFolderPath, fileWatcherEvent.Name)
+		app.db.Exec("DELETE FROM files WHERE id = ?", relativePath)
+
 		// Return the file deleted event
 		runtime.EventsEmit(
 			app.ctx, "file-change", "Removed: "+fileName,
@@ -123,6 +120,9 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 
 }
 
+// Waits briefly after the last change to a file before actually processing it,
+// so rapid-fire write events (e.g. from a large copy) only trigger one version
+// instead of several.
 func (app *App) ScheduleFileProcessing(filePath string) {
 
 	app.timerMutex.Lock()
@@ -166,12 +166,11 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 				filepath.Base(filePath),
 			)
 
-			chunks := app.ChunkFile(filePath)
-
-			app.SaveChunks(
-				filePath,
-				chunks,
-			)
+			deviceID, _ := network.GetLocalIP()
+			recordError := RecordFileVersion(app.db, app.syncFolderPath, filePath, deviceID)
+			if recordError != nil {
+				fmt.Println("Failed to record file version:", recordError)
+			}
 		},
 	)
 
