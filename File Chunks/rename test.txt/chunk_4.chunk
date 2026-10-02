@@ -1,0 +1,16 @@
+   integer 
+                                  *                     PaymentID                             integer 
+ProductID           integer                                                                             *        Quantity                 integer 
+                                                        OrderID                           integer 
+Quantity                integer                      *                                                           Price         decimal(10,2) 
+                                                        PaymentMethodID                   integer 
+
+                                                        PaymentAmount              decimal(10,2) 
+
+PaymentMethods                                          PaymentDate                        timestamp 
+
+                                               1 
+PaymentMethodID                      integer            PaymentStatus                varchar(50) 
+
+                                               * 
+UserI

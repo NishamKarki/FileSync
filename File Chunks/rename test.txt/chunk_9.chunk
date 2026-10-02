@@ -1,0 +1,10 @@
+                                                       OrderID              integer 
+                                  *                     Payments                                                                                   * 
+CartID              integer                                                                                      ProductID            integer 
+                                  *                     PaymentID                             integer 
+ProductID           integer                                                                             *        Quantity                 integer 
+                                                        OrderID                           integer 
+Quantity                integer                      *                                                           Price         decimal(10,2) 
+                                                        PaymentMethodID                   integer 
+
+                                              

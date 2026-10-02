@@ -14,7 +14,7 @@ import (
 func (app *App) AddFile() string {
 
 	// Open file picker widow
-	selectFile, filePickingError := runtime.OpenFileDialog(
+	selectFilePath, filePickingError := runtime.OpenFileDialog(
 		app.ctx,
 		runtime.OpenDialogOptions{
 			Title: "Select a file to add to FileSync",
@@ -27,12 +27,12 @@ func (app *App) AddFile() string {
 	}
 
 	// If user cancels, return nothing
-	if selectFile == "" {
+	if selectFilePath == "" {
 		return ""
 	}
 
 	// Get selected file name
-	fileName := filepath.Base(selectFile)
+	fileName := filepath.Base(selectFilePath)
 
 	// Create destination path for files to sync
 	destinationFilePath := filepath.Join(
@@ -41,13 +41,17 @@ func (app *App) AddFile() string {
 	)
 
 	// Check whether file already exists in the Synced files
-	destinationFileInfo, destinationCheckError :=
-		os.Stat(destinationFilePath)
+	destinationFilePath, ifFileAlreadyExists :=
+		GetAvailableFilePath(
+			selectFilePath,
+			app.syncFolderPath,
+		)
 
 	// Return message if a files already exists in the folder
-	if destinationCheckError == nil {
+	if ifFileAlreadyExists {
+
 		fmt.Println(
-			destinationFileInfo.Name(),
+			filepath.Base(selectFilePath),
 			"already exists in Synced Files",
 		)
 
@@ -56,7 +60,7 @@ func (app *App) AddFile() string {
 
 	// Open original file
 	sourceFile, sourceFileOpenError :=
-		os.Open(selectFile)
+		os.Open(selectFilePath)
 
 	if sourceFileOpenError != nil {
 		return ""
@@ -79,9 +83,9 @@ func (app *App) AddFile() string {
 	io.Copy(destinationFile, sourceFile)
 
 	fmt.Println(
-		fileName,
+		filepath.Base(destinationFilePath),
 		"copied successfully",
 	)
 
-	return fileName
+	return filepath.Base(destinationFilePath)
 }
