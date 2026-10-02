@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -16,6 +18,9 @@ type App struct {
 	syncFolderPath   string
 	fileWatcher      *fsnotify.Watcher
 	chunkStoragePath string
+	fileTimers map[string]*time.Timer
+	timerMutex sync.Mutex
+	
 }
 
 // NewApp creates a new App application struct
@@ -27,6 +32,8 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	a.fileTimers = make(map[string]*time.Timer)
 
 	// Get the project's current directory
 	getProjectDirectory, projectDirectoryError := os.Getwd()
