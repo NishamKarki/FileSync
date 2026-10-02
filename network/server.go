@@ -2,6 +2,8 @@
 package network
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -118,11 +120,11 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//
 	fileName := r.FormValue("fileName")
 	chunkIndexText := r.FormValue("chunkIndex")
+	expectedChunkHash := r.FormValue("chunkHash")
 
-	if fileName == "" || chunkIndexText == "" {
+	if fileName == "" || chunkIndexText == "" || expectedChunkHash == "" {
 		http.Error(w, "Missing chunk metadata", http.StatusBadRequest)
 		return
 	}
@@ -141,6 +143,24 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer chunkFile.Close()
 
+	chunkData, err := io.ReadAll(chunkFile)
+	if err != nil {
+		http.Error(w, "Failed to read chunk data", http.StatusInternalServerError)
+		return
+	}
+
+	receivedHash := sha256.Sum256(chunkData)
+	receivedHashString := hex.EncodeToString(receivedHash[:])
+
+	if receivedHashString != expectedChunkHash {
+
+		fmt.Printf("Chunk %d of %s failed integrity verification", chunkIndex, fileName)
+		http.Error(w, "Chunk  integrity verification failed", http.StatusBadRequest)
+		return
+	}
+
+	fmt.Printf("Chunk %d of %s passed SHA-256 verification\n", chunkIndex, fileName)
+
 	// Get the current working directory to save the uploaded chunk
 	projectDirectory, err := os.Getwd()
 	if err != nil {
@@ -157,7 +177,7 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Construct the path for the chunk file within the chunk folder
-	chunkPath := filepath.Join(chunkFolder, fmt.Sprintf("chunk_%d.chhunk", chunkIndex))
+	chunkPath := filepath.Join(chunkFolder, fmt.Sprintf("chunk_%d.chunk", chunkIndex))
 	destinationChunk, err := os.Create(chunkPath)
 	if err != nil {
 		http.Error(w, "Failed to create chunk file", http.StatusInternalServerError)
@@ -166,7 +186,7 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 	defer destinationChunk.Close()
 
 	// Copy the uploaded chunk to the destination chunk file
-	_, err = io.Copy(destinationChunk, chunkFile)
+	_, err = destinationChunk.Write(chunkData)
 	if err != nil {
 		http.Error(w, "Failed to save uploaded chunk", http.StatusInternalServerError)
 		return

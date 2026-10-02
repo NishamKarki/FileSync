@@ -99,7 +99,7 @@ func SendFile(address, filePath string) error {
 	return nil
 }
 
-func SendChunk(address string, fileName string, chunkIndex int, chunkData []byte) error {
+func SendChunk(address string, fileName string, chunkIndex int, chunkHash string, chunkData []byte) error {
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
 
@@ -111,6 +111,12 @@ func SendChunk(address string, fileName string, chunkIndex int, chunkData []byte
 
 	// Send the index of the current chunk being sent
 	err = writer.WriteField("chunkIndex", fmt.Sprintf("%d", chunkIndex))
+	if err != nil {
+		return err
+	}
+
+	// Send the SHA-256 hash of the chunk so the receiving device can verify its integrity
+	err = writer.WriteField("chunkHash", chunkHash)
 	if err != nil {
 		return err
 	}

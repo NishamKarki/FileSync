@@ -129,5 +129,5 @@ func (a *App) SendFirstChunk(address string, fileName string) error {
 	firstChunk := chunks[0]
 
 	fmt.Printf("Sending chunk %d of %s to %s\n", firstChunk.Index, fileName, address)
-	return network.SendChunk(address, fileName, firstChunk.Index, firstChunk.Data)
+	return network.SendChunk(address, fileName, firstChunk.Index, firstChunk.Hash, firstChunk.Data)
 }
