@@ -102,10 +102,11 @@ func (a *App) SendFile(address string, fileName string) error {
 // /Rabindra Neupane
 // SendChunk send the first chunk of a file to another FileSync device on the network
 func (a *App) SendFirstChunk(address string, fileName string) error {
-	filePath := filepath.Join(a.chunkStoragePath, fileName)
+	filePath := filepath.Join(a.syncFolderPath, fileName)
 
 	chunks := a.ChunkFile(filePath)
 
+	// Check if any chunks were created for the file
 	if len(chunks) == 0 {
 		return fmt.Errorf("no chunks created for file: %s", filePath)
 	}

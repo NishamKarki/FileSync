@@ -59,10 +59,6 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 
 		// Run file chunking when a file is modified
 		// Copying a file into Synced File also trigger Write event
-		app.ChunkFile(fileWatcherEvent.Name)
-
-		// Save the chunked file data when the file watcher detects
-		// file creation and modification event
 		chunks := app.ChunkFile(fileWatcherEvent.Name)
 
 		app.SaveChunks(fileWatcherEvent.Name, chunks)
