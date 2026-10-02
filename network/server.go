@@ -122,18 +122,34 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 
 	fileName := r.FormValue("fileName")
 	chunkIndexText := r.FormValue("chunkIndex")
+	totalChunksText := r.FormValue("totalChunks")
 	expectedChunkHash := r.FormValue("chunkHash")
 
-	if fileName == "" || chunkIndexText == "" || expectedChunkHash == "" {
+	// Validate the presence of all required chunk metadata fields
+	if fileName == "" || chunkIndexText == "" || totalChunksText == "" || expectedChunkHash == "" {
 		http.Error(w, "Missing chunk metadata", http.StatusBadRequest)
 		return
 	}
-
+	// Convert the chunk index text to an integer
 	chunkIndex, err := strconv.Atoi(chunkIndexText)
 	if err != nil {
 		http.Error(w, "Invalid chunk index", http.StatusBadRequest)
 		return
 	}
+	// Convert the total chunks text to an integer
+	totalChunks, err := strconv.Atoi(totalChunksText)
+	if err != nil || totalChunks <= 0 {
+		http.Error(w, "Invalid total chunks count", http.StatusBadRequest)
+		return
+	}
+	// Make sure the chunk index is within the valid range
+	if chunkIndex < 0 || chunkIndex >= totalChunks {
+		http.Error(w, "Chunk index out of range", http.StatusBadRequest)
+		return
+	}
+
+	// Log the start of receiving the chunk
+	fmt.Printf("Receiving chunk %d of %d for %s\n", chunkIndex+1, totalChunks, fileName)
 
 	// Read the uploaded chunk from the request
 	chunkFile, _, err := r.FormFile("Chunk")
@@ -183,7 +199,6 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to create chunk file", http.StatusInternalServerError)
 		return
 	}
-	defer destinationChunk.Close()
 
 	// Copy the uploaded chunk to the destination chunk file
 	_, err = destinationChunk.Write(chunkData)
@@ -193,5 +208,31 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Printf("Chunk %d of %s successfully received\n", chunkIndex, fileName)
 
+	if err := destinationChunk.Close(); err != nil {
+		http.Error(w, "Failed to close received chunk file", http.StatusInternalServerError)
+		return
+	}
+
+	allChunksReceived := true
+	for i := 0; i < totalChunks; i++ {
+		expectedChunkPath := filepath.Join(chunkFolder, fmt.Sprintf("chunk_%d.chunk", i))
+
+		if _, err := os.Stat(expectedChunkPath); err != nil {
+			allChunksReceived = false
+			break
+		}
+	}
+
+	if allChunksReceived {
+		fmt.Printf("All %d chunks of %s have been received\n", totalChunks, fileName)
+		err := ReconstructFile(projectDirectory, fileName, totalChunks)
+		if err != nil {
+			fmt.Printf("File reconstructruction failed: %v\n", err)
+			http.Error(w, "File reconstructruction failed", http.StatusInternalServerError)
+			return
+		}
+
+		fmt.Printf("File %s reconstructed successfully\n", fileName)
+	}
 	w.WriteHeader(http.StatusOK)
 }

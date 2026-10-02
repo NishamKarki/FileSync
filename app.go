@@ -130,11 +130,11 @@ func (a *App) SendFirstChunk(address string, fileName string) error {
 	firstChunk := chunks[0]
 
 	fmt.Printf("Sending chunk %d of %s to %s\n", firstChunk.Index, fileName, address)
-	return network.SendChunk(address, fileName, firstChunk.Index, firstChunk.Hash, firstChunk.Data)
+	return network.SendChunk(address, fileName, firstChunk.Index, len(chunks), firstChunk.Hash, firstChunk.Data)
 }
 
 func (a *App) SendAllChunks(address string, fileName string) error {
-	filePath := filepath.Join(a.chunkStoragePath, fileName)
+	filePath := filepath.Join(a.syncFolderPath, fileName)
 
 	// Chunk the file into smaller pieces for sending
 	chunks, err := ChunkFile(filePath)
@@ -152,7 +152,7 @@ func (a *App) SendAllChunks(address string, fileName string) error {
 	// Send chunk one by one, ensuring each chunk is successfully transmitted before moving on to the next one
 	for _, chunk := range chunks {
 		fmt.Printf("Sending chunk %d of %d...\n", chunk.Index+1, len(chunks))
-		err := network.SendChunk(address, fileName, chunk.Index, chunk.Hash, chunk.Data)
+		err := network.SendChunk(address, fileName, chunk.Index, len(chunks), chunk.Hash, chunk.Data)
 		if err != nil {
 			return fmt.Errorf("failed to send chunk %d of %s: %w", chunk.Index, fileName, err)
 		}

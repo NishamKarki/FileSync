@@ -99,7 +99,7 @@ func SendFile(address, filePath string) error {
 	return nil
 }
 
-func SendChunk(address string, fileName string, chunkIndex int, chunkHash string, chunkData []byte) error {
+func SendChunk(address string, fileName string, chunkIndex int, totalChunks int, chunkHash string, chunkData []byte) error {
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
 
