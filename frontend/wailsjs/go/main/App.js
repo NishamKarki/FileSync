@@ -37,3 +37,7 @@ export function SaveChunks(arg1, arg2) {
 export function SendFile(arg1, arg2) {
   return window['go']['main']['App']['SendFile'](arg1, arg2);
 }
+
+export function SendFirstChunk(arg1, arg2) {
+  return window['go']['main']['App']['SendFirstChunk'](arg1, arg2);
+}
