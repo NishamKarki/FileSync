@@ -116,6 +116,7 @@ func (a *App) SendFile(address string, fileName string) error {
 func (a *App) SendFirstChunk(address string, fileName string) error {
 	filePath := filepath.Join(a.syncFolderPath, fileName)
 
+	// Chunk the file into smaller pieces for sending
 	chunks, err := ChunkFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to chunk file %s: %w", filePath, err)
@@ -130,4 +131,33 @@ func (a *App) SendFirstChunk(address string, fileName string) error {
 
 	fmt.Printf("Sending chunk %d of %s to %s\n", firstChunk.Index, fileName, address)
 	return network.SendChunk(address, fileName, firstChunk.Index, firstChunk.Hash, firstChunk.Data)
+}
+
+func (a *App) SendAllChunks(address string, fileName string) error {
+	filePath := filepath.Join(a.chunkStoragePath, fileName)
+
+	// Chunk the file into smaller pieces for sending
+	chunks, err := ChunkFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to chunk file %s: %w", filePath, err)
+	}
+
+	// Check if any chunks were created for the file
+	if len(chunks) == 0 {
+		return fmt.Errorf("no chunks created for file: %s", filePath)
+	}
+	// Send all chunks of the file to the specified address
+	fmt.Printf("Sending %d chunks of %s to %s\n", len(chunks), fileName, address)
+
+	// Send chunk one by one, ensuring each chunk is successfully transmitted before moving on to the next one
+	for _, chunk := range chunks {
+		fmt.Printf("Sending chunk %d of %d...\n", chunk.Index+1, len(chunks))
+		err := network.SendChunk(address, fileName, chunk.Index, chunk.Hash, chunk.Data)
+		if err != nil {
+			return fmt.Errorf("failed to send chunk %d of %s: %w", chunk.Index, fileName, err)
+		}
+	}
+
+	fmt.Printf("All %d chunks of %s successfully sent to %s\n", len(chunks), fileName, address)
+	return nil
 }

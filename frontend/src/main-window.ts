@@ -4,7 +4,8 @@ import {
     DiscoverDevices,
     GetLocalIP,
     SendFile,
-    SendFirstChunk
+    SendFirstChunk,
+    SendAllChunks
 } from '../wailsjs/go/main/App';
 // EventsOn calls runtime event from file modification detected by fileWatcher.go
 import { EventsOn } from '../wailsjs/runtime/runtime';
@@ -85,7 +86,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
         <footer class="footer">
             <button id="sync-now-button">Sync Now</button>
-            <button id="test-chunk-button">Send First Chunk</button>
+            <button id="test-chunk-button">Send All Chunk</button>
 
             <div>
                 <button>Conflicts</button>
@@ -262,6 +263,7 @@ EventsOn('file-change', (modifiedFile: string) => {
     }
 })
 
+// /Rabindra Neupane
 // Test chunk button event listener
 const testChunkButton = document.getElementById('test-chunk-button')
 testChunkButton?.addEventListener('click', async () => {
@@ -310,6 +312,55 @@ testChunkButton?.addEventListener('click', async () => {
         // Update the recent file activity to reflect the failure
         if (recentFileActivity) {
             recentFileActivity.textContent = `Failed to send first chunk of ${selectedFileName}.`;
+        }
+    }
+});
+
+///Rabindra Neupane
+// Send all chunks of the selected file to the selected device
+const sendAllChunksButton = document.getElementById('send-all-chunks-button')
+sendAllChunksButton?.addEventListener('click', async () => {
+
+    // Send all chunks of the selected file to the selected device
+    if(! selectedFileName) {
+        console.log("Please select a file first.");
+
+        if (recentFileActivity) {
+            recentFileActivity.textContent = "Please select a file to sync first.";
+        }
+        return;
+    }
+
+    // Check if a FileSync device is selected
+    if(! selectedDeviceAddress) {
+        console.log("Please select a FileSync device first.");
+
+        if (recentFileActivity) {
+            recentFileActivity.textContent = "Please select a device first.";
+        }
+        return;
+    }
+
+    // Attempt to send all chunks of the selected file to the selected device
+    try {
+        console.log("Sending all chunks of", selectedFileName, "to", selectedDeviceAddress);
+
+        // Update the recent file activity to indicate that sending is in progress
+        if (recentFileActivity) {
+            recentFileActivity.textContent = `Sending all chunks of ${selectedFileName}...`;
+        }
+
+        await SendAllChunks(selectedDeviceAddress, selectedFileName);
+
+        if (recentFileActivity) {
+            recentFileActivity.textContent = `All chunks of ${selectedFileName} sent successfully.`;
+        }
+        console.log("All chunks sent successfully.");
+    }
+    catch (error) {
+        console.error("Failed to send all chunks:", error);
+        if (recentFileActivity) {
+            recentFileActivity.textContent = `Failed to send all chunks of ${selectedFileName}.`;
         }
     }
 });
