@@ -157,7 +157,7 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Construct the path for the chunk file within the chunk folder
-	chunkPath := filepath.Join(chunkFolder, fmt.Sprintf("chunk_%d.chhunk", chunkIndex))
+	chunkPath := filepath.Join(chunkFolder, fmt.Sprintf("chunk_%d.chunk", chunkIndex))
 	destinationChunk, err := os.Create(chunkPath)
 	if err != nil {
 		http.Error(w, "Failed to create chunk file", http.StatusInternalServerError)
