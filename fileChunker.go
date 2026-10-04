@@ -2,7 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 )
@@ -17,39 +17,93 @@ type Chunk struct {
 	Hash  string // SHA-256 hash of Data, hex-encoded
 }
 
-// Splits a file into fixed-size chunks and computes a SHA-256 hash for each one.
-func ChunkFile(filePath string) ([]Chunk, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
+// Function that divides a file into chunks
+func (app *App) ChunkFile(filePath string) ([]Chunk, error) {
+	// An array that store chunks created from a file
+	var fileChunks []Chunk
 
-	var chunks []Chunk
-	buffer := make([]byte, chunkSize)
-	index := 0
+	// Open a file that needs to be chunked
+	fileToChunk, fileOpenError := os.Open(filePath)
+
+	// Check error during file opening
+	if fileOpenError != nil {
+		fmt.Print("File opening error: ", fileOpenError)
+		return fileChunks, fileOpenError
+	}
+
+	defer fileToChunk.Close()
+
+	chunkIndex := 0
 
 	for {
-		bytesRead, err := file.Read(buffer)
-		if bytesRead > 0 {
-			data := make([]byte, bytesRead)
-			copy(data, buffer[:bytesRead])
 
-			hash := sha256.Sum256(data)
+		// Temporary buffer for one fixed-size chunk
+		chunkBuffer := make(
+			[]byte,
+			chunkSize,
+		)
 
-			chunks = append(chunks, Chunk{
-				Index: index,
-				Data:  data,
-				Hash:  hex.EncodeToString(hash[:]),
-			})
-			index++
+		// Read up to 1 KB
+		totalBytesRead, fileReadingError :=
+			fileToChunk.Read(chunkBuffer)
+
+		if totalBytesRead > 0 {
+
+			// Keep only bytes actually read
+			chunkData := make(
+				[]byte,
+				totalBytesRead,
+			)
+
+			copy(
+				chunkData,
+				chunkBuffer[:totalBytesRead],
+			)
+
+			// Generate SHA-256 AFTER actual data is copied
+			chunkHash :=
+				sha256.Sum256(chunkData)
+
+			newChunk := Chunk{
+				Index: chunkIndex,
+				Data:  chunkData,
+				Hash:  fmt.Sprintf("%x", chunkHash),
+			}
+
+			fileChunks = append(
+				fileChunks,
+				newChunk,
+			)
+
+			fmt.Println(
+				"Chunk:",
+				chunkIndex,
+				"\nBytes read:",
+				totalBytesRead,
+			)
+
+			chunkIndex++
 		}
-		if err == io.EOF {
+
+		if fileReadingError == io.EOF {
 			break
 		}
-		if err != nil {
-			return nil, err
+
+		if fileReadingError != nil {
+
+			fmt.Println(
+				"File reading error:",
+				fileReadingError,
+			)
+
+			return fileChunks, fileReadingError
 		}
 	}
-	return chunks, nil
+
+	fmt.Println(
+		"Total Chunks gotten:",
+		len(fileChunks),
+	)
+
+	return fileChunks, nil
 }

@@ -13,7 +13,11 @@ import (
 // If the file is new, its added to the files table with version 1.
 // If it already exists, a new version is recoreded, linked back to the version it came
 // from (this is what let us detect conflicts later).
-func RecordFileVersion(db *sql.DB, syncFolderPath string, filePath string, deviceID string) error {
+func RecordFileVersion(db *sql.DB,
+	syncFolderPath string,
+	filePath string,
+	deviceID string,
+	chunks []Chunk) error {
 
 	// Wait for the file to be fully written/unlocked before trying to read it
 	if readyError := waitForFileReady(filePath); readyError != nil {
@@ -26,12 +30,6 @@ func RecordFileVersion(db *sql.DB, syncFolderPath string, filePath string, devic
 		return err
 	}
 	fileName := filepath.Base(filePath)
-
-	// Split the file into chunks and hash each one
-	chunks, err := ChunkFile(filePath)
-	if err != nil {
-		return err
-	}
 
 	// Get the file size
 	fileInfo, err := os.Stat(filePath)

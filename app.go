@@ -116,7 +116,11 @@ func (a *App) SendFile(address string, fileName string) error {
 func (a *App) SendFirstChunk(address string, fileName string) error {
 	filePath := filepath.Join(a.syncFolderPath, fileName)
 
-	chunks := a.ChunkFile(filePath)
+	chunks, chunkError := a.ChunkFile(filePath)
+
+	if chunkError != nil {
+		return chunkError
+	}
 
 	// Check if any chunks were created for the file
 	if len(chunks) == 0 {

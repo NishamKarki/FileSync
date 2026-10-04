@@ -57,7 +57,7 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	}
 
 	// Ignore .~tmp files
-	if strings.HasSuffix(fileName, ".~tmp") {
+	if strings.HasSuffix(strings.ToLower(fileName), ".~tmp") {
 		fmt.Println("IGNORED temporary file:", fileName)
 		return
 	}
@@ -166,13 +166,50 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 				filepath.Base(filePath),
 			)
 
-			deviceID, _ := network.GetLocalIP()
-			recordError := RecordFileVersion(app.db, app.syncFolderPath, filePath, deviceID)
+			// Chunk the file once
+			chunks, chunkError := app.ChunkFile(filePath)
+
+			if chunkError != nil {
+				fmt.Println(
+					"File chunking error:",
+					chunkError,
+				)
+				return
+			}
+
+			// Save chunks locally
+			app.SaveChunks(
+				filePath,
+				chunks,
+			)
+
+			// Get local device ID
+			deviceID, deviceIDError := network.GetLocalIP()
+
+			if deviceIDError != nil {
+				fmt.Println(
+					"Failed to get device ID:",
+					deviceIDError,
+				)
+				return
+			}
+
+			// Record file version and chunk hashes in database
+			recordError := RecordFileVersion(
+				app.db,
+				app.syncFolderPath,
+				filePath,
+				deviceID,
+				chunks,
+			)
+
 			if recordError != nil {
-				fmt.Println("Failed to record file version:", recordError)
+				fmt.Println(
+					"Failed to record file version:",
+					recordError,
+				)
 			}
 		},
 	)
-
 	app.timerMutex.Unlock()
 }
