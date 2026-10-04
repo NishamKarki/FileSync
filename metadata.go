@@ -16,28 +16,28 @@ func InitDatabase(syncFolderPath string) (*sql.DB, error) {
 	dbPath := filepath.Join(filepath.Dir(syncFolderPath), "filesync.db")
 
 	// Open a connection to the database (creates the file if missing)
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, err
+	database, databaseOpenError := sql.Open("sqlite", dbPath)
+	if databaseOpenError != nil {
+		return nil, databaseOpenError
 	}
 
 	// Check that the connection actually works
-	pingError := db.Ping()
+	pingError := database.Ping()
 	if pingError != nil {
 		return nil, pingError
 	}
 
 	// Create the tables id that do not exists yet
-	tableError := createTables(db)
+	tableError := createTables(database)
 	if tableError != nil {
 		return nil, tableError
 	}
 
-	return db, nil
+	return database, nil
 }
 
 // Creates the three tables fileSync needs : files, file_versions, and chunks
-func createTables(db *sql.DB) error {
+func createTables(database *sql.DB) error {
 
 	// files: one row per synced file, tracking its current version
 	filesTable := `
@@ -74,23 +74,53 @@ func createTables(db *sql.DB) error {
 		FOREIGN KEY (file_version_id) REFERENCES file_versions(id)
 	);`
 
-	// Run each one separately. IF NOT EXISTS means this is safe to run
-	//  every time the app starts without wiping existing data.
-	_, err := db.Exec(filesTable)
-	if err != nil {
-		return err
+	// Create the files table.
+	filesTableCreationError :=
+		executeTableCreation(
+			database,
+			filesTable,
+		)
+
+	if filesTableCreationError != nil {
+		return filesTableCreationError
 	}
 
-	_, err = db.Exec(versionsTable)
-	if err != nil {
-		return err
+	// Create the file_versions table.
+	versionsTableCreationError :=
+		executeTableCreation(
+			database,
+			versionsTable,
+		)
+
+	if versionsTableCreationError != nil {
+		return versionsTableCreationError
 	}
 
-	_, err = db.Exec(chunksTable)
-	if err != nil {
-		return err
+	// Create the chunks table.
+	chunksTableCreationError :=
+		executeTableCreation(
+			database,
+			chunksTable,
+		)
+
+	if chunksTableCreationError != nil {
+		return chunksTableCreationError
 	}
 
 	return nil
+}
 
+// executeTableCreation runs a CREATE TABLE statement.
+//
+// The table definitions use IF NOT EXISTS, so running this function
+// every time the application starts does not remove existing data.
+func executeTableCreation(
+	database *sql.DB,
+	tableQuery string,
+) error {
+
+	_, tableExecutionError :=
+		database.Exec(tableQuery)
+
+	return tableExecutionError
 }

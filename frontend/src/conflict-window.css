@@ -1,75 +1,142 @@
+/* Conflict Window - Page Layout
+   Centers the conflict dialog inside the Wails window. */
+
+/* Applies border-box sizing to every element so padding and borders
+   stay included inside the element's set width and height. */
 * {
     box-sizing: border-box;
 }
 
+/* Controls the overall page that contains the conflict window. */
 body {
     min-height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    /* Makes the page at least as tall as the full browser/Wails window */
     background-color: #151515;
     color: #f1f1f1;
+
+    /* Uses a flexible layout to position
+    in the center of the available screen space. */
+    display: flex;
+    /* Moves the conflict window to the vertical center of the page. */
+    align-items: center;
+    /* Moves the conflict window to the horizontal center of the page. */
+    justify-content: center;
 }
 
+/* Conflict Details
+   Controls the main content area containing the file name,
+   warning message, and competing file versions */
 .conflict-content {
+    /* Adds space between the conflict information and the edges of the dialog*/
     padding: 22px;
 }
 
+
+/* File information shown near the top of the dialog */
 .label {
-    margin: 0 0 4px 0;
     color: #999;
     font-size: 12px;
+
+    /* Removes the default top margin and leaves only a small amount
+       of space below the label before the file name. */
+    margin: 0 0 4px 0;
 }
 
+
+/* Styles the file name shown in the file information section. */
 .file-info h3 {
+    /* Removes the browser's default heading margin so the file name
+       sits close to its label. */
     margin: 0;
+
     font-size: 17px;
 }
 
+/* Device Version Cards
+   Each card represents one version involved in the conflict */
 .conflict-device {
-    padding: 16px;
     background-color: #292929;
+
+    /* Adds space between the device/version information and the edges
+       of each version card. */
+    padding: 16px;
+
+    /* Adds a visible outline around each version card */
     border: 1px solid #414141;
+
+    /* Rounds the corners slightly */
     border-radius: 7px;
 }
 
+/* Identifies whether the card contains the local
+   or the conflicting device version */
 .device-version {
-    margin: 0;
     color: #999;
     font-size: 11px;
+
+    /* Removes the default paragraph margin so the version label stays
+       close to the device name shown underneath it. */
+    margin: 0;
+
+    /* Converts the version label to uppercase */
     text-transform: uppercase;
 }
 
+/* Displays when that device last modified its copy */
 .modified-info {
     color: #aaa;
 }
 
+/*  Conflict Actions
+    Contains the buttons shown at the bottom of the window */
 .conflict-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 10px;
+    /* Adds vertical and horizontal spacing around the buttons so they
+       do not touch the dialog edges */
     padding: 16px 22px;
+
+    /* Uses a flexible layout so the action buttons appear next
+       to each other in one horizontal row. */
+    display: flex;
+
+    /* Leaves spacing between the two action buttons. */
+    gap: 10px;
+
+    /* Pushes the Cancel and Keep Both Versions buttons toward the
+       right side of the conflict window. */
+    justify-content: flex-end;
+
+    /* Creates a divider between the conflict information and the
+       action buttons at the bottom of the window. */
     border-top: 1px solid #444;
 }
 
-.cancel-button,
-.both-version-button {
-    padding: 9px 16px;
-    border-radius: 6px;
+/* Shared design for both conflict action buttons */
+.cancel-button-clickable,
+.both-version-button-clickable {
     font-size: 13px;
+
+    /* Adds space around the button text */
+    padding: 9px 16px;
+
+    /* Gives both buttons rounded corners */
+    border-radius: 6px;
+
+    /* Changes the mouse cursor to a hand pointer */
     cursor: pointer;
 }
 
-.cancel-button {
-    background-color: #292929;
+.cancel-button-clickable {
     color: #ddd;
+    background-color: #292929;
+
+    /* Gives the Cancel button a visible outline */
     border: 1px solid #555;
 }
 
-.cancel-button:hover {
+.cancel-button-clickable {
     background-color: #373737;
 }
 
-.both-version-button:hover {
+.both-version-button-clickable:hover {
     background-color: rgb(192, 192, 192);
 }
