@@ -1,0 +1,24 @@
+D                           integer 
+
+PaymentType                  varchar(50) 
+
+CardHolderName                   varchar(50) 
+
+EncryptedCardNumber               binary 
+
+ExpirationMonth                  integer 
+
+ExpirationYear                   integer 
+
+BillingAddress                           text 
+
+Token                           varchar(255) 
+
+----------------------- Page 2-----------------------
+
+Users                                                   Categories                                               Products                                             Carts 
+
+                                       1                                                           1          1                                             1     1 
+UserID                       integer                    CategoryID                       integer                 ProductID                        integer             CartID              integer 
+
+                                                           

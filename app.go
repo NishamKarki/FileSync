@@ -3,9 +3,12 @@ package main
 import (
 	"FileSyncWails/network"
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -16,6 +19,9 @@ type App struct {
 	syncFolderPath   string
 	fileWatcher      *fsnotify.Watcher
 	chunkStoragePath string
+	db               *sql.DB
+	fileTimers       map[string]*time.Timer
+	timerMutex       sync.Mutex
 }
 
 // NewApp creates a new App application struct
@@ -27,6 +33,8 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+
+	a.fileTimers = make(map[string]*time.Timer)
 
 	// Get the project's current directory
 	getProjectDirectory, projectDirectoryError := os.Getwd()
@@ -50,19 +58,23 @@ func (a *App) startup(ctx context.Context) {
 	// while the group and others can read and execute but cannot write
 	os.MkdirAll(a.syncFolderPath, 0755)
 
-	// Create "File Chunks" folder, if it doesn't already exist
-	os.MkdirAll(a.syncFolderPath, 0755)
-
-	// Initialize FileWatcher function at program startup
-	a.FileWatcher(a.syncFolderPath)
-
 	// Create path to save chunks inside "File Chunks" folder
 	a.chunkStoragePath = filepath.Join(
 		getProjectDirectory,
 		"File Chunks",
 	)
-
 	os.MkdirAll(a.chunkStoragePath, 0755)
+
+	// Set up the metadata database
+	db, dbError := InitDatabase(a.syncFolderPath)
+	if dbError != nil {
+		fmt.Println("Database setup failed:", dbError)
+		return
+	}
+	a.db = db
+
+	// Initialize FileWatcher function at program startup
+	a.FileWatcher(a.syncFolderPath)
 
 	go network.StartServer("8080")
 }
