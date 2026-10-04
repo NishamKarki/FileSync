@@ -27,7 +27,7 @@ type Chunk struct {
 }
 
 // Function that divides a file into chunks
-func (app *App) ChunkFile(filePath string) []Chunk {
+func (app *App) ChunkFile(filePath string) ([]Chunk, error) {
 	// An array that store chunks created from a file
 	var fileChunks []Chunk
 
