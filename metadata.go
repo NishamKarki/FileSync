@@ -27,7 +27,7 @@ func InitDatabase(syncFolderPath string) (*sql.DB, error) {
 		return nil, pingError
 	}
 
-	// Create the tables id they do not exists yet
+	// Create the tables id that do not exists yet
 	tableError := createTables(db)
 	if tableError != nil {
 		return nil, tableError
