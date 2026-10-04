@@ -24,9 +24,9 @@ func PingDevice(address string) (*PingResponse, error) {
 		Timeout:   5 * time.Second,
 	}
 	// Send a GET request to the /ping endpoint of the specified address
-	response, err := client.Get("http://" + address + "/ping")
-	if err != nil {
-		return nil, err
+	response, responseErr := client.Get("http://" + address + "/ping")
+	if responseErr != nil {
+		return nil, responseErr
 	}
 
 	defer response.Body.Close()
@@ -36,9 +36,9 @@ func PingDevice(address string) (*PingResponse, error) {
 	}
 	// Decode the JSON response into a PingResponse struct
 	var pingResponse PingResponse
-	err = json.NewDecoder(response.Body).Decode(&pingResponse)
-	if err != nil {
-		return nil, err
+	responseErr = json.NewDecoder(response.Body).Decode(&pingResponse)
+	if responseErr != nil {
+		return nil, responseErr
 	}
 	return &pingResponse, nil
 }
@@ -46,47 +46,47 @@ func PingDevice(address string) (*PingResponse, error) {
 // SendFile sends a file to the specified address using a POST request
 func SendFile(address, filePath string) error {
 	// Open the file to be sent
-	file, err := os.Open(filePath)
-	if err != nil {
-		return err
+	openfile, openFileErr := os.Open(filePath)
+	if openFileErr != nil {
+		return openFileErr
 	}
-	defer file.Close()
+	defer openfile.Close()
 	// Create the HTTP request body
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
 
 	//Add the file to the request body
-	filePart, err := writer.CreateFormFile("file", filepath.Base(filePath))
-	if err != nil {
-		return err
+	filePart, filePartErr := writer.CreateFormFile("file", filepath.Base(filePath))
+	if filePartErr != nil {
+		return filePartErr
 	}
 
 	// Copy the file contents into the request body
-	_, err = io.Copy(filePart, file)
-	if err != nil {
-		return err
+	_, copyErr := io.Copy(filePart, openfile)
+	if copyErr != nil {
+		return copyErr
 	}
 
 	// Close the multipart writer to finalize the request body
-	err = writer.Close()
-	if err != nil {
-		return err
+	filePartErr = writer.Close()
+	if filePartErr != nil {
+		return filePartErr
 	}
 	// Create a new HTTP request for sending the file
-	request, err := http.NewRequest(http.MethodPost, "http://"+address+"/file", &requestBody)
-	if err != nil {
-		return err
+	sendFileRequest, sendFileRequestErr := http.NewRequest(http.MethodPost, "http://"+address+"/file", &requestBody)
+	if sendFileRequestErr != nil {
+		return sendFileRequestErr
 	}
-	request.Header.Set("Content-Type", writer.FormDataContentType())
+	sendFileRequest.Header.Set("Content-Type", writer.FormDataContentType())
 
 	// Create an HTTP client with a timeout for sending the file
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
 
-	response, err := client.Do(request)
-	if err != nil {
-		return err
+	response, sendFileRequestErr := client.Do(sendFileRequest)
+	if sendFileRequestErr != nil {
+		return sendFileRequestErr
 	}
 	defer response.Body.Close()
 
@@ -104,46 +104,45 @@ func SendChunk(address string, fileName string, chunkIndex int, chunkData []byte
 	writer := multipart.NewWriter(&requestBody)
 
 	// Send the name of the original file being split into chunks
-	err := writer.WriteField("fileName", fileName)
-	if err != nil {
-		return err
+	sendFileNameErr := writer.WriteField("fileName", fileName)
+	if sendFileNameErr != nil {
+		return sendFileNameErr
 	}
 
 	// Send the index of the current chunk being sent
-	err = writer.WriteField("chunkIndex", fmt.Sprintf("%d", chunkIndex))
-	if err != nil {
-		return err
+	sendChunkIndexErr := writer.WriteField("chunkIndex", fmt.Sprintf("%d", chunkIndex))
+	if sendChunkIndexErr != nil {
+		return sendChunkIndexErr
 	}
 
 	// Add the chunk data to the request body
-	chunkPart, err := writer.CreateFormFile("Chunk", fmt.Sprintf("Chunk_%d.chunk", chunkIndex))
-	if err != nil {
-		return err
+	chunkPart, chunkPartErr := writer.CreateFormFile("Chunk", fmt.Sprintf("Chunk_%d.chunk", chunkIndex))
+	if chunkPartErr != nil {
+		return chunkPartErr
 	}
 
-	_, err = chunkPart.Write(chunkData)
-	if err != nil {
-		return err
+	_, writeChunkDataErr := chunkPart.Write(chunkData)
+	if writeChunkDataErr != nil {
+		return writeChunkDataErr
 	}
-	err = writer.Close()
-	if err != nil {
-		return err
+	chunkPartErr = writer.Close()
+	if chunkPartErr != nil {
+		return chunkPartErr
 	}
 
 	// Send the chunk data to the receiving device
-	request, err := http.NewRequest(http.MethodPost, "http://"+address+"/chunk", &requestBody)
-	if err != nil {
-		return err
+	request, chunkReceiveErr := http.NewRequest(http.MethodPost, "http://"+address+"/chunk", &requestBody)
+	if chunkReceiveErr != nil {
+		return chunkReceiveErr
 	}
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
-
-	response, err := client.Do(request)
-	if err != nil {
-		return err
+	response, chunkReceiveErr := client.Do(request)
+	if chunkReceiveErr != nil {
+		return chunkReceiveErr
 	}
 	defer response.Body.Close()
 
