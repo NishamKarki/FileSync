@@ -1,5 +1,11 @@
 // AddFile runs the file picking window from filepicker.go
-import { AddFile, DiscoverDevices, GetLocalIP, SendFile } from '../wailsjs/go/main/App';
+import { 
+    AddFile,
+    DiscoverDevices,
+    GetLocalIP,
+    SendFile,
+    SendFirstChunk
+} from '../wailsjs/go/main/App';
 // EventsOn calls runtime event from file modification detected by fileWatcher.go
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import './main-window.css'; // CSS Style for this main window
@@ -79,6 +85,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
         <footer class="footer">
             <button id="sync-now-button">Sync Now</button>
+            <button id="test-chunk-button">Send First Chunk</button>
 
             <div>
                 <button>Conflicts</button>
@@ -164,28 +171,58 @@ scanDevicesButton?.addEventListener('click', () => {scanDevices()});
 let selectedDeviceAddress: string | null = null;
 /// Selected file information
 let selectedFileName: string | null = null;
+// Use to populate "Recent activity" section with recently modified files
+const recentFileActivity = document.getElementById('recent-activity')
 
 const syncNowButton = document.getElementById('sync-now-button');
 syncNowButton?.addEventListener('click', async () => {
     // If no file is selected, prompt the user to select a file first.
     if (!selectedFileName) {
         console.log("Please select a file to sync first.");
+
+        // Update the recent activity section to inform the user
+        if(recentFileActivity) {
+            recentFileActivity.textContent = "Please select a file to sync first.";
+        }
+
         return;
     }
     // If no device is selected, prompt the user to select a device first.
     if (!selectedDeviceAddress) {
         console.log("Please select a device to sync first.");
+
+        // Update the recent activity section to inform the user
+        if(recentFileActivity) {
+            recentFileActivity.textContent = "Please select a device to sync first.";
+        }
+
         return;
     }
 
     try {
         console.log("Sending file:", selectedFileName, "to device:", selectedDeviceAddress);
+
+        // Update the recent activity section to inform the user that sending is in progress
+        if(recentFileActivity) {
+            recentFileActivity.textContent = `Sending ${selectedFileName} to ${selectedDeviceAddress}...`;
+        }
+
         await SendFile(selectedDeviceAddress, selectedFileName);
+
+        // Update the recent activity section to inform the user that the file has been synced successfully
+        if(recentFileActivity) {
+            recentFileActivity.textContent = `${selectedFileName} synced successfully to ${selectedDeviceAddress}`;
+        }
         console.log("File sent successfully");
     }
     catch (error) {
-        console.error("Failed to send file", error);
+        // Update the recent activity section to inform the user that the sync failed
+        if(recentFileActivity) {
+            recentFileActivity.textContent = `Failed to sync ${selectedFileName} to ${selectedDeviceAddress}`;
         }
+
+        console.error("Failed to send file", error);
+    }
 });
 
 ///// Nisham Karki
@@ -193,8 +230,6 @@ syncNowButton?.addEventListener('click', async () => {
 const selectFileButton = document.getElementById('select-file-button')
 // Use this to replace the "no file selected" with the name of the file selected
 const selectedFileText = document.getElementById('selected-files')
-// Use to populate "Recent activity" section with recently modified files
-const recentFileActivity = document.getElementById('recent-activity')
 
 // Event listener for when user click on "Select File"
 selectFileButton?.addEventListener('click', async () => {
@@ -226,3 +261,55 @@ EventsOn('file-change', (modifiedFile: string) => {
         recentFileActivity.textContent = recentActivites.join('\n')
     }
 })
+
+// Test chunk button event listener
+const testChunkButton = document.getElementById('test-chunk-button')
+testChunkButton?.addEventListener('click', async () => {
+
+    // Send the first chunk of the selected file to the selected device
+    if(! selectedFileName) {
+        console.log("Please select a file firsr.");
+
+        if (recentFileActivity) {
+            recentFileActivity.textContent = "Please select a file first.";
+        }
+        return;
+    }
+
+    // Check if a FileSync device is selected
+    if(! selectedDeviceAddress) {
+        console.log("Please select a FileSync device first.");
+
+        if (recentFileActivity) {
+            recentFileActivity.textContent = "Please select a device first.";
+        }
+        return;
+    }
+
+    // Attempt to send the first chunk of the selected file to the selected device
+    try {
+        console.log("Sending first chunk of", selectedFileName, "to", selectedDeviceAddress);
+
+        // Update the recent file activity to indicate that sending is in progress
+        if (recentFileActivity) {
+        recentFileActivity.textContent = `Sending first chunk of ${selectedFileName}...`;
+        }
+
+        // Send the first chunk of the selected file to the selected device
+        await SendFirstChunk(selectedDeviceAddress, selectedFileName);
+        console.log("First chunk sent successfully.");
+
+        // Update the recent file activity to reflect successful sending of the first chunk
+        if (recentFileActivity) {
+            recentFileActivity.textContent = `First chunk of ${selectedFileName} sent successfully.`;
+        }
+    }
+    // Handle any errors that occur during the sending process
+    catch (error) {
+        console.error("Failed to send first chunk:", error);
+        // Update the recent file activity to reflect the failure
+        if (recentFileActivity) {
+            recentFileActivity.textContent = `Failed to send first chunk of ${selectedFileName}.`;
+        }
+    }
+});

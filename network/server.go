@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 // PingResponse represents the response from a ping request
@@ -95,6 +96,9 @@ func StartServer(port string) {
 	mux.HandleFunc("/ping", pingHandler)
 	// Create a new HTTP ServeMux to handle incoming file transfer requests
 	mux.HandleFunc("/file", fileHandler)
+	// Create a new HTTP ServeMux to handle incoming chunk transfer requests
+	mux.HandleFunc("/chunk", chunkHandler)
+
 	// Print server starting message to the console
 	fmt.Println("FileSync Network Server Starting...", port)
 	fmt.Println("Listening on port:", port)
@@ -104,4 +108,70 @@ func StartServer(port string) {
 	if err != nil {
 		fmt.Println("Network server error:", err)
 	}
+}
+
+func chunkHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Chunk transfer request received")
+	// Check if the request method is POST, otherwise return a "Method not allowed" error
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only Post Requests are allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	//
+	fileName := r.FormValue("fileName")
+	chunkIndexText := r.FormValue("chunkIndex")
+
+	if fileName == "" || chunkIndexText == "" {
+		http.Error(w, "Missing chunk metadata", http.StatusBadRequest)
+		return
+	}
+
+	chunkIndex, err := strconv.Atoi(chunkIndexText)
+	if err != nil {
+		http.Error(w, "Invalid chunk index", http.StatusBadRequest)
+		return
+	}
+
+	// Read the uploaded chunk from the request
+	chunkFile, _, err := r.FormFile("Chunk")
+	if err != nil {
+		http.Error(w, "Failed to read uploaded chunk", http.StatusBadRequest)
+		return
+	}
+	defer chunkFile.Close()
+
+	// Get the current working directory to save the uploaded chunk
+	projectDirectory, err := os.Getwd()
+	if err != nil {
+		http.Error(w, "Failed to get project directory", http.StatusInternalServerError)
+		return
+	}
+
+	// Construct the path to the folder where the chunk will be saved
+	chunkFolder := filepath.Join(projectDirectory, "File Chunks", filepath.Base(fileName))
+	err = os.MkdirAll(chunkFolder, 0755)
+	if err != nil {
+		http.Error(w, "Failed to create chunk folder", http.StatusInternalServerError)
+		return
+	}
+
+	// Construct the path for the chunk file within the chunk folder
+	chunkPath := filepath.Join(chunkFolder, fmt.Sprintf("chunk_%d.chunk", chunkIndex))
+	destinationChunk, err := os.Create(chunkPath)
+	if err != nil {
+		http.Error(w, "Failed to create chunk file", http.StatusInternalServerError)
+		return
+	}
+	defer destinationChunk.Close()
+
+	// Copy the uploaded chunk to the destination chunk file
+	_, err = io.Copy(destinationChunk, chunkFile)
+	if err != nil {
+		http.Error(w, "Failed to save uploaded chunk", http.StatusInternalServerError)
+		return
+	}
+	fmt.Printf("Chunk %d of %s successfully received\n", chunkIndex, fileName)
+
+	w.WriteHeader(http.StatusOK)
 }
