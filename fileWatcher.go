@@ -3,6 +3,7 @@
 package main
 
 import (
+	"FileSyncWails/network"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -55,8 +56,8 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 		return
 	}
 
-	// // Ignore .~tmp files
-	if strings.HasSuffix(fileName, ".~tmp") {
+	// Ignore .~tmp files
+	if strings.HasSuffix(strings.ToLower(fileName), ".~tmp") {
 		fmt.Println("IGNORED temporary file:", fileName)
 		return
 	}
@@ -107,6 +108,10 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	// Check for Files delete event
 	if fileWatcherEvent.Op == fsnotify.Remove {
 		fmt.Println("REMOVE:", fileName)
+
+		relativePath, _ := filepath.Rel(app.syncFolderPath, fileWatcherEvent.Name)
+		app.db.Exec("DELETE FROM files WHERE id = ?", relativePath)
+
 		// Return the file deleted event
 		runtime.EventsEmit(
 			app.ctx, "file-change", "Removed: "+fileName,
@@ -115,6 +120,9 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 
 }
 
+// Waits briefly after the last change to a file before actually processing it,
+// so rapid-fire write events (e.g. from a large copy) only trigger one version
+// instead of several.
 func (app *App) ScheduleFileProcessing(filePath string) {
 
 	app.timerMutex.Lock()
@@ -158,14 +166,50 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 				filepath.Base(filePath),
 			)
 
-			chunks := app.ChunkFile(filePath)
+			// Chunk the file once
+			chunks, chunkError := app.ChunkFile(filePath)
 
+			if chunkError != nil {
+				fmt.Println(
+					"File chunking error:",
+					chunkError,
+				)
+				return
+			}
+
+			// Save chunks locally
 			app.SaveChunks(
 				filePath,
 				chunks,
 			)
+
+			// Get local device ID
+			deviceID, deviceIDError := network.GetLocalIP()
+
+			if deviceIDError != nil {
+				fmt.Println(
+					"Failed to get device ID:",
+					deviceIDError,
+				)
+				return
+			}
+
+			// Record file version and chunk hashes in database
+			recordError := RecordFileVersion(
+				app.db,
+				app.syncFolderPath,
+				filePath,
+				deviceID,
+				chunks,
+			)
+
+			if recordError != nil {
+				fmt.Println(
+					"Failed to record file version:",
+					recordError,
+				)
+			}
 		},
 	)
-
 	app.timerMutex.Unlock()
 }

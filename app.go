@@ -3,6 +3,7 @@ package main
 import (
 	"FileSyncWails/network"
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,9 +19,9 @@ type App struct {
 	syncFolderPath   string
 	fileWatcher      *fsnotify.Watcher
 	chunkStoragePath string
-	fileTimers map[string]*time.Timer
-	timerMutex sync.Mutex
-	
+	db               *sql.DB
+	fileTimers       map[string]*time.Timer
+	timerMutex       sync.Mutex
 }
 
 // NewApp creates a new App application struct
@@ -57,19 +58,23 @@ func (a *App) startup(ctx context.Context) {
 	// while the group and others can read and execute but cannot write
 	os.MkdirAll(a.syncFolderPath, 0755)
 
-	// Create "File Chunks" folder, if it doesn't already exist
-	os.MkdirAll(a.syncFolderPath, 0755)
-
-	// Initialize FileWatcher function at program startup
-	a.FileWatcher(a.syncFolderPath)
-
 	// Create path to save chunks inside "File Chunks" folder
 	a.chunkStoragePath = filepath.Join(
 		getProjectDirectory,
 		"File Chunks",
 	)
-
 	os.MkdirAll(a.chunkStoragePath, 0755)
+
+	// Set up the metadata database
+	db, dbError := InitDatabase(a.syncFolderPath)
+	if dbError != nil {
+		fmt.Println("Database setup failed:", dbError)
+		return
+	}
+	a.db = db
+
+	// Initialize FileWatcher function at program startup
+	a.FileWatcher(a.syncFolderPath)
 
 	go network.StartServer("8080")
 }
@@ -104,4 +109,26 @@ func (a *App) SendFile(address string, fileName string) error {
 	filePath := filepath.Join(a.syncFolderPath, fileName)
 
 	return network.SendFile(address, filePath)
+}
+
+// /Rabindra Neupane
+// SendChunk send the first chunk of a file to another FileSync device on the network
+func (a *App) SendFirstChunk(address string, fileName string) error {
+	filePath := filepath.Join(a.syncFolderPath, fileName)
+
+	chunks, chunkError := a.ChunkFile(filePath)
+
+	if chunkError != nil {
+		return chunkError
+	}
+
+	// Check if any chunks were created for the file
+	if len(chunks) == 0 {
+		return fmt.Errorf("no chunks created for file: %s", filePath)
+	}
+
+	firstChunk := chunks[0]
+
+	fmt.Printf("Sending chunk %d of %s to %s\n", firstChunk.Index, fileName, address)
+	return network.SendChunk(address, fileName, firstChunk.Index, firstChunk.Data)
 }

@@ -1,20 +1,11 @@
 package main
 
 import (
-	sha256 "crypto/sha256"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
 )
-
-/////// Nisham Karki
-// File Chunking: First initialize a fixed sized chunk
-// Open a file and read it
-// Create a structure that stores the data of a file in a chunk, and give it
-// 		an id/index for chunk locating/indentifying
-// Begin reading the file data worth the size of a chunk and save in the structure
-// Move to the remaining data of the file
-// Repeat until the file is fully reads and store in chunks
 
 // Initial fixed size chunk set to 1 KB (1024)
 const chunkSize = 1024
@@ -23,7 +14,7 @@ const chunkSize = 1024
 type Chunk struct {
 	Index int
 	Data  []byte
-	Hash  string
+	Hash  string // SHA-256 hash of Data, hex-encoded
 }
 
 // Function that divides a file into chunks
@@ -37,66 +28,82 @@ func (app *App) ChunkFile(filePath string) ([]Chunk, error) {
 	// Check error during file opening
 	if fileOpenError != nil {
 		fmt.Print("File opening error: ", fileOpenError)
-		return fileChunks
+		return fileChunks, fileOpenError
 	}
 
 	defer fileToChunk.Close()
 
-	// Initialize chunk index
-	ChunkIndex := 0
+	chunkIndex := 0
 
 	for {
-		// Create an empty temporary storage to hold a chunk
-		chunkBuffer := make([]byte, chunkSize)
 
-		// Read only up to the fixed size of the chunk from the file
-		totalBytesRead, fileReadingError := fileToChunk.Read(chunkBuffer)
+		// Temporary buffer for one fixed-size chunk
+		chunkBuffer := make(
+			[]byte,
+			chunkSize,
+		)
+
+		// Read up to 1 KB
+		totalBytesRead, fileReadingError :=
+			fileToChunk.Read(chunkBuffer)
 
 		if totalBytesRead > 0 {
 
-			// Create chunk data that contains only the byte that were read from the file
-			chunkData := make([]byte, totalBytesRead)
-			chunkHash := sha256.Sum256(chunkData)
+			// Keep only bytes actually read
+			chunkData := make(
+				[]byte,
+				totalBytesRead,
+			)
 
-			// Use string slicing to slice the chunked portion from the buffer
-			// and store it into chunkData
-			copy(chunkData, chunkBuffer[:totalBytesRead])
+			copy(
+				chunkData,
+				chunkBuffer[:totalBytesRead],
+			)
 
-			// Create the chunk
+			// Generate SHA-256 AFTER actual data is copied
+			chunkHash :=
+				sha256.Sum256(chunkData)
+
 			newChunk := Chunk{
-				Index: ChunkIndex,
+				Index: chunkIndex,
 				Data:  chunkData,
-				Hash:  fmt.Sprintf("%x", chunkHash)}
+				Hash:  fmt.Sprintf("%x", chunkHash),
+			}
 
-			// Add the chunk to the chunk list
-			fileChunks = append(fileChunks, newChunk)
+			fileChunks = append(
+				fileChunks,
+				newChunk,
+			)
 
-			// Testing total chunks gotten
-			fmt.Println("Chunk: ", ChunkIndex, "\nBytes read: ", totalBytesRead)
+			fmt.Println(
+				"Chunk:",
+				chunkIndex,
+				"\nBytes read:",
+				totalBytesRead,
+			)
+
+			chunkIndex++
 		}
 
-		ChunkIndex++
-
-		// Testing for end-of-file.
-		// EOF means file chunking is complete
 		if fileReadingError == io.EOF {
 			break
 		}
 
 		if fileReadingError != nil {
-			fmt.Println("File reading error: ", fileReadingError)
-			break
+
+			fmt.Println(
+				"File reading error:",
+				fileReadingError,
+			)
+
+			return fileChunks, fileReadingError
 		}
 	}
 
-	fileInfo, error := fileToChunk.Stat()
-	if error != nil {
-		fmt.Println("")
-	}
+	fmt.Println(
+		"Total Chunks gotten:",
+		len(fileChunks),
+	)
 
-	// Total chunks
-	fmt.Println("\nFile size: ", fileInfo.Size(),
-		"\nTotal Chunks gotten: ", len(fileChunks))
-
-	return fileChunks
+	return fileChunks, nil
 }
