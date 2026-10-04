@@ -1,9 +1,0 @@
-                                                                                                       * 
-FirstName            varchar(50)                        CategoryName             varchar(50)                     ProductName             varchar(255)                 UserID          integer 
-
-LastName             varchar(50)                        Description                          text                Description                          text 
-
-Email              varchar(255)                                                                                  Price                  decimal(10,2) 
-                                                                                                                                                                      OrderHistory 
-Password           varchar(255)                                                                                  Stock                             integer 
-                                                        Orders            

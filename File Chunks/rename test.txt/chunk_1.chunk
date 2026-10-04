@@ -1,8 +1,0 @@
-                          text                Description                          text 
-
-Email              varchar(255)                                                                                  Price                  decimal(10,2) 
-                                                                                                                                                                      OrderHistory 
-Password           varchar(255)                                                                                  Stock                             integer 
-                                                        Orders                                               *                                                        HistoryID                  integer 
-Address                          text                                                                            CategoryID                   integer 
-                                                                                       

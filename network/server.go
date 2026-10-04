@@ -19,12 +19,12 @@ type PingResponse struct {
 }
 
 // pingHandler handles the /ping endpoint and responds with a PingResponse
-func pingHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+func pingHandler(responseWriter http.ResponseWriter, request *http.Request) {
+	responseWriter.Header().Set("Content-Type", "application/json")
 
 	// Get the hostname of the device running the server
-	deviceName, deviceNameErr := os.Hostname()
-	if deviceNameErr != nil {
+	deviceName, deviceNameError := os.Hostname()
+	if deviceNameError != nil {
 		deviceName = "Unknown Device"
 	}
 	// Create a PingResponse indicating the server is online
@@ -33,21 +33,21 @@ func pingHandler(w http.ResponseWriter, r *http.Request) {
 		Message:    "FileSync Client is Online",
 		DeviceName: deviceName,
 	}
-	json.NewEncoder(w).Encode(pingResponse)
+	json.NewEncoder(responseWriter).Encode(pingResponse)
 }
 
 // fileHandler handels incomming file transfer requests and responds with a status code
-func fileHandler(w http.ResponseWriter, r *http.Request) {
+func fileHandler(responseWriter http.ResponseWriter, request *http.Request) {
 	fmt.Println("File transfer request received")
 	// Check if the request method is POST, otherwise return a "Method not allowed" error
-	if r.Method != http.MethodPost {
-		http.Error(w, "Only Post Requests are allowed", http.StatusMethodNotAllowed)
+	if request.Method != http.MethodPost {
+		http.Error(responseWriter, "Only Post Requests are allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	// Read the uploaded file from the request
-	file, fileHeader, uploadFileErr := r.FormFile("file")
+	file, fileHeader, uploadFileErr := request.FormFile("file")
 	if uploadFileErr != nil {
-		http.Error(w, "Failed to read uploaded file", http.StatusBadRequest)
+		http.Error(responseWriter, "Failed to read uploaded file", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
@@ -57,7 +57,7 @@ func fileHandler(w http.ResponseWriter, r *http.Request) {
 	// Get the current working directory to save the uploaded file
 	projectDirectory, projectDirectoryErr := os.Getwd()
 	if projectDirectoryErr != nil {
-		http.Error(w, "Failed to get project directory", http.StatusInternalServerError)
+		http.Error(responseWriter, "Failed to get project directory", http.StatusInternalServerError)
 		return
 	}
 
@@ -67,14 +67,14 @@ func fileHandler(w http.ResponseWriter, r *http.Request) {
 	// Make sure the sync folder exists, create if it doesn't
 	projectDirectoryErr = os.MkdirAll(syncFolder, 0755)
 	if projectDirectoryErr != nil {
-		http.Error(w, "Failed to create sync folder", http.StatusInternalServerError)
+		http.Error(responseWriter, "Failed to create sync folder", http.StatusInternalServerError)
 		return
 	}
 	// Create the destination file in the sync folder
 	destinationPath := filepath.Join(syncFolder, filepath.Base(fileHeader.Filename))
 	destinationFile, destinationFileErr := os.Create(destinationPath)
 	if destinationFileErr != nil {
-		http.Error(w, "Failed to create destination file", http.StatusInternalServerError)
+		http.Error(responseWriter, "Failed to create destination file", http.StatusInternalServerError)
 		return
 	}
 	defer destinationFile.Close()
@@ -82,11 +82,11 @@ func fileHandler(w http.ResponseWriter, r *http.Request) {
 	// Copy the received file to the destination file
 	_, copyErr := io.Copy(destinationFile, file)
 	if copyErr != nil {
-		http.Error(w, "Failed to save uploaded file", http.StatusInternalServerError)
+		http.Error(responseWriter, "Failed to save uploaded file", http.StatusInternalServerError)
 		return
 	}
 	fmt.Println("File successfully saved to:", destinationPath)
-	w.WriteHeader(http.StatusOK)
+	responseWriter.WriteHeader(http.StatusOK)
 }
 
 // StartServer starts the HTTP server on the specified port
@@ -111,33 +111,33 @@ func StartServer(port string) {
 	}
 }
 
-func chunkHandler(w http.ResponseWriter, r *http.Request) {
+func chunkHandler(responseWriter http.ResponseWriter, request *http.Request) {
 	fmt.Println("Chunk transfer request received")
 	// Check if the request method is POST, otherwise return a "Method not allowed" error
-	if r.Method != http.MethodPost {
-		http.Error(w, "Only Post Requests are allowed", http.StatusMethodNotAllowed)
+	if request.Method != http.MethodPost {
+		http.Error(responseWriter, "Only Post Requests are allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	//
-	fileName := r.FormValue("fileName")
-	chunkIndexText := r.FormValue("chunkIndex")
+	fileName := request.FormValue("fileName")
+	chunkIndexText := request.FormValue("chunkIndex")
 
 	if fileName == "" || chunkIndexText == "" {
-		http.Error(w, "Missing chunk metadata", http.StatusBadRequest)
+		http.Error(responseWriter, "Missing chunk metadata", http.StatusBadRequest)
 		return
 	}
 
 	chunkIndex, chunkIndexErr := strconv.Atoi(chunkIndexText)
 	if chunkIndexErr != nil {
-		http.Error(w, "Invalid chunk index", http.StatusBadRequest)
+		http.Error(responseWriter, "Invalid chunk index", http.StatusBadRequest)
 		return
 	}
 
 	// Read the uploaded chunk from the request
-	chunkFile, _, uploadChunkErr := r.FormFile("Chunk")
+	chunkFile, _, uploadChunkErr := request.FormFile("Chunk")
 	if uploadChunkErr != nil {
-		http.Error(w, "Failed to read uploaded chunk", http.StatusBadRequest)
+		http.Error(responseWriter, "Failed to read uploaded chunk", http.StatusBadRequest)
 		return
 	}
 	defer chunkFile.Close()
@@ -145,7 +145,7 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 	// Get the current working directory to save the uploaded chunk
 	projectDirectory, projectDirectoryErr := os.Getwd()
 	if projectDirectoryErr != nil {
-		http.Error(w, "Failed to get project directory", http.StatusInternalServerError)
+		http.Error(responseWriter, "Failed to get project directory", http.StatusInternalServerError)
 		return
 	}
 
@@ -153,7 +153,7 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 	chunkFolder := filepath.Join(projectDirectory, "File Chunks", filepath.Base(fileName))
 	projectDirectoryErr = os.MkdirAll(chunkFolder, 0755)
 	if projectDirectoryErr != nil {
-		http.Error(w, "Failed to create chunk folder", http.StatusInternalServerError)
+		http.Error(responseWriter, "Failed to create chunk folder", http.StatusInternalServerError)
 		return
 	}
 
@@ -161,7 +161,7 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 	chunkPath := filepath.Join(chunkFolder, fmt.Sprintf("chunk_%d.chunk", chunkIndex))
 	destinationChunk, destinationChunkErr := os.Create(chunkPath)
 	if destinationChunkErr != nil {
-		http.Error(w, "Failed to create chunk file", http.StatusInternalServerError)
+		http.Error(responseWriter, "Failed to create chunk file", http.StatusInternalServerError)
 		return
 	}
 	defer destinationChunk.Close()
@@ -169,10 +169,10 @@ func chunkHandler(w http.ResponseWriter, r *http.Request) {
 	// Copy the uploaded chunk to the destination chunk file
 	_, copyErr := io.Copy(destinationChunk, chunkFile)
 	if copyErr != nil {
-		http.Error(w, "Failed to save uploaded chunk", http.StatusInternalServerError)
+		http.Error(responseWriter, "Failed to save uploaded chunk", http.StatusInternalServerError)
 		return
 	}
 	fmt.Printf("Chunk %d of %s successfully received\n", chunkIndex, fileName)
 
-	w.WriteHeader(http.StatusOK)
+	responseWriter.WriteHeader(http.StatusOK)
 }

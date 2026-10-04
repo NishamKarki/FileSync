@@ -59,13 +59,13 @@ func DiscoverDevices() []Device {
 			// Check if the ping was successful and the device is online
 			if pingErr == nil && response.Success {
 				device := Device{
-					Name:   response.DeviceName,
-					IP:     deviceIP,
-					Port:   8080,
-					Online: true,
+					DeviceName:   response.DeviceName,
+					DeviceIP:     deviceIP,
+					DevicePort:   8080,
+					DeviceOnline: true,
 				}
 
-				fmt.Println("FileSync device found:", device.Name, device.IP)
+				fmt.Println("FileSync device found:", device.DeviceName, device.DeviceIP)
 				results <- device
 				return
 			}
@@ -78,7 +78,7 @@ func DiscoverDevices() []Device {
 	// Wait for all goroutines to finish and collect the results
 	for index := 0; index < 253; index++ {
 		device := <-results
-		if device.IP != "" {
+		if device.DeviceIP != "" {
 			devices = append(devices, device)
 		}
 	}
