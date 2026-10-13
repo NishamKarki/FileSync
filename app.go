@@ -15,13 +15,14 @@ import (
 
 // // App stores the shared application state used by the FileSync backend.
 type App struct {
-	ctx              context.Context
-	syncFolderPath   string            // Folder path containing Files monitored by FileSync
-	fileWatcher      *fsnotify.Watcher // Watcher used to detect change inside the sync folder
-	chunkStoragePath string            // Path where the generated file chunks are store
-	db               *sql.DB
-	fileTimers       map[string]*time.Timer // Stores tier for files that are being modified
-	timerMutex       sync.Mutex             // Protects fileTimer from being accessed by multiple go routine at the same time
+	ctx                    context.Context
+	syncFolderPath         string            // Folder path containing Files monitored by FileSync
+	fileWatcher            *fsnotify.Watcher // Watcher used to detect change inside the sync folder
+	chunkStoragePath       string            // Path where the generated file chunks are store
+	reconstructedFilesPath string
+	db                     *sql.DB
+	fileTimers             map[string]*time.Timer // Stores tier for files that are being modified
+	timerMutex             sync.Mutex             // Protects fileTimer from being accessed by multiple go routine at the same time
 }
 
 // NewApp creates a new App application struct
@@ -70,6 +71,18 @@ func (a *App) startup(ctx context.Context) {
 
 	// Create "File Chunks" folder, if it does not exist
 	os.MkdirAll(a.chunkStoragePath, 0755)
+
+	// Create path used to store reconstructed files.
+	a.reconstructedFilesPath = filepath.Join(
+		getProjectDirectory,
+		"Reconstructed Files",
+	)
+
+	// Create the Reconstructed Files folder if it does not already exist.
+	os.MkdirAll(
+		a.reconstructedFilesPath,
+		0755,
+	)
 
 	// Initialize the metadata database
 	db, dbError := InitDatabase(a.syncFolderPath)

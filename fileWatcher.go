@@ -199,6 +199,19 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 				chunks,
 			)
 
+			// Reconstruct the file from the saved chunks.
+			reconstructionError := app.ReconstructFile(
+				filepath.Base(filePath),
+			)
+
+			if reconstructionError != nil {
+				fmt.Println(
+					"File reconstruction error:",
+					reconstructionError,
+				)
+				return
+			}
+
 			// Get local device ID
 			deviceID, deviceIDError := network.GetLocalIP()
 
