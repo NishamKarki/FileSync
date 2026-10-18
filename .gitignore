@@ -1,0 +1,7 @@
+/Synced Files/
+/File Chunks/
+/Reconstructed Files/
+/build/bin/
+/frontend/dist/
+/frontend/node_modules/
+*.db

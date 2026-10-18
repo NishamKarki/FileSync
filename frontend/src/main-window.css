@@ -1,36 +1,75 @@
+/* Main FileSync Window
+   Basic appearance used throughout the application */
+
 html,
 body {
+    /* Allows the application content to use almost the full window width */
+    width: 99%;
+
+    /* Keeps a small amount of space on both sides of the FileSync window */
     margin-left: 5;
     margin-right: 5;
-    width: 99%;
-    font-family: "Segoe UI", Arial, sans-serif;
+
     background: #181818;
     color: #f1f1f1;
+
+    font-family: "Segoe UI", Arial, sans-serif;
 }
 
+/* Application Header
+   Displays the FileSync title at the top of the window */
 .title {
+    /* Adds space around the FileSync heading so it does not
+       touch the top or sides of the application window */
     padding: 18px 26px;
+
+    /* Separates the title area from the file selection section below it */
     border-bottom: 1px solid #444;
 }
 
 .title h1 {
+    /* Removes the browser's default heading margin */
     margin: 0;
+
     font-size: 20px;
 }
 
+/* File Selection Area
+   Contains the selected file information and Select File button */
 .select-file-to-sync {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    /* Creates a visual boundary between file selection
+       and the file list underneath it */
     border-bottom: 1px solid #444;
+
+    /* Places the file information and Select File button
+       beside each other in one horizontal row */
+    display: flex;
+
+    /* Vertically aligns the file information and button
+       within the same row */
+    align-items: center;
+
+    /* Keeps the file details on the left and moves the
+       Select File button toward the right side */
+    justify-content: space-between;
 }
 
+/* Shared FileSync Buttons
+   Gives application buttons a consistent appearance */
 button {
+    /* Gives button labels space */
+    padding: 9px 16px;
+
     background: #646464;
     color: #ffffff;
+
+    /* Creates a thin boundary around each button */
     border: 1px solid;
+
+    /* Keeps button corners almost square */
     border-radius: 1px;
-    padding: 9px 16px;
+
+    /* Changes the mouse cursor to indicate that the control is clickable */
     cursor: pointer;
 }
 
@@ -39,60 +78,109 @@ button:hover {
 }
 
 .section {
+    /* Creates consistent spacing inside the lower information panels */
     padding: 20px 26px;
 }
 
 .section h2 {
-    margin: 0 0 15px 0;
     font-size: 20px;
+    /* Removes unnecessary spacing above the section heading */
+    margin: 0 0 15px 0;
 }
 
+/* File List
+   Displays files currently shown in the FileSync interface */
 .file-details {
+    /* Separates the file table from the device/activity
+       area shown underneath it */
     border-bottom: 1px solid #444;
 }
 
 .file-table {
+    /* Leaves a small amount of space below the file list
+       before the next section begins */
     margin: 0 0 10px 0;
+
+    /* Allows the table to use the complete available width
+       of the FileSync window */
     width: 100%;
 }
 
 .file-table th {
-    text-align: left;
-    color: #aaa;
+    /* Adds spacing inside each table heading cell */
     padding: 10px 8px;
+
+    color: #aaa;
+
+    /* Aligns the Name, Status, Size, and Modified headings
+       with the file information underneath them */
+    text-align: left;
+
+    /* Draws a line underneath the table headings to separate
+       them from the synchronized file entries */
     border-bottom: 1px solid #555;
 }
 
 .file-table td {
+    /* Gives each file row enough vertical and horizontal space */
     padding: 12px 8px;
     font-size: 14px;
 }
 
+/* Connected Devices + Recent Activity
+   Places both information panels beside each other */
 .progress-activity {
-    display: grid;
+    /* Gives Recent Activity slightly more horizontal space
+       than the Connected Devices panel */
     grid-template-columns: 1fr 1.5fr;
+    /* Uses a grid so the Connected Devices and Recent Activity
+       panels can occupy separate columns */
+    display: grid;
 }
 
 .devices {
+    /* Adds a divider between Connected Devices on the left
+       and Recent Activity on the right */
     border-right: 1px solid #444;
 }
 
+/* Individual Device Entries
+   Controls how discovered FileSync devices appear in the list */
 .device {
-    display: flex;
-    grid-template-columns: 16px 1fr auto;
-    align-items: center;
-    gap: 5px;
+    /* Adds vertical separation between discovered devices */
     margin: 13px 0;
+
+    /* Creates a small space between pieces of device information */
+    gap: 5px;
+
+    /* Shows that a device row can be clicked or selected */
     cursor: pointer;
+
+    /* Places the device information on one horizontal line */
+    display: flex;
+
+    /* Keeps device information vertically aligned within the row */
+    align-items: center;
+
+    grid-template-columns: 16px 1fr auto;
 }
 
 .device.selected-device {
+    /* Places a visible outline around the currently selected device */
     border: 2px solid;
+
+    /* Rounds the selection outline */
     border-radius: 6px;
 }
 
+/* Recent Activity
+   Displays file-change messages produced by FileSync */
 .activity p span {
+    /* Allows the span to use a fixed width while remaining
+       inside the activity text line */
     display: inline-block;
+
+    /* Keeps activity labels aligned with each other */
     width: 50px;
 }
 
@@ -100,14 +188,28 @@ button:hover {
     white-space: pre-line;
 }
 
+/* Bottom Action Bar
+   Contains synchronization and application control buttons */
 .footer {
-    display: flex;
-    justify-content: space-between;
+    /* Adds spacing around the footer controls */
     padding: 15px 26px;
+
+    /* Separates the bottom action bar from the main content above */
     border-top: 1px solid #444;
+
+    /* Places the synchronization controls and secondary controls
+       on the same horizontal line */
+    display: flex;
+
+    /* Keeps Sync Now / Send First Chunk on one side and
+       Conflicts / Settings on the opposite side */
+    justify-content: space-between;
 }
 
 .footer div {
+    /* Places the Conflicts and Settings buttons beside each other */
     display: flex;
+
+    /* Prevents the two secondary buttons from touching */
     gap: 10px;
 }

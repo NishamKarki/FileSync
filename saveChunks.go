@@ -1,3 +1,5 @@
+// Author: Nisham Karki
+
 package main
 
 import (
@@ -7,10 +9,10 @@ import (
 	"path/filepath"
 )
 
-// Create individual folder for each file
-// Open a file to chunk. Save chunk in the folder
-// Name the folder as the file's name
-
+// SaveChunks creates individual folder for each file that are chunks
+// in local "File Chunks" directory
+// Each synchronized files get their own chunk folder
+// If modified files become smaller, and produce less chunks, old chunks are removed
 func (app *App) SaveChunks(filePath string, chunks []Chunk) {
 
 	// Get file name
@@ -22,7 +24,7 @@ func (app *App) SaveChunks(filePath string, chunks []Chunk) {
 		fileName,
 	)
 
-	// Create chunk folder
+	// Create chunk folder, if it does not exist
 	folderCreationError := os.MkdirAll(
 		fileChunkFolder,
 		0755,
@@ -36,32 +38,36 @@ func (app *App) SaveChunks(filePath string, chunks []Chunk) {
 		return
 	}
 
+	// Process each chunk generated from the file
 	for index := 0; index < len(chunks); index++ {
 
 		chunk := chunks[index]
 
 		// Create chunk file name
+		// Ex: "chunk_0.chunk", "chunk_1.chunk", and so on
 		chunkFileName := fmt.Sprintf(
 			"chunk_%d.chunk",
 			chunk.Index,
 		)
 
-		// Create chunk file path
+		// Create chunk file path where the chunk will be stored
 		chunkFilePath := filepath.Join(
 			fileChunkFolder,
 			chunkFileName,
 		)
 
-		// Check if this chunk already exists
+		// Read an existing version of the chunk for the lcoal storage
 		existingChunkData, chunkReadError :=
 			os.ReadFile(chunkFilePath)
 
+		// Compare hash value with the new chunk, if the chunk already exists
 		if chunkReadError == nil {
 
 			// Generate SHA-256 hash for the existing stored chunk
 			existingChunkHash :=
 				sha256.Sum256(existingChunkData)
 
+			// Convert the existing hash into hexadecimal format used by ChunkFile
 			existingChunkHashString :=
 				fmt.Sprintf("%x", existingChunkHash)
 
@@ -100,7 +106,8 @@ func (app *App) SaveChunks(filePath string, chunks []Chunk) {
 
 	}
 
-	// Check for old chunks that are no longer needed
+	// Read the chunk folder to check if the old chunks remain after a files
+	// becomes smaller due to modification
 	existingChunkFiles, readDirectoryError :=
 		os.ReadDir(fileChunkFolder)
 

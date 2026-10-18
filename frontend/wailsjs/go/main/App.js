@@ -30,12 +30,20 @@ export function PingDevice(arg1) {
   return window['go']['main']['App']['PingDevice'](arg1);
 }
 
+export function ReconstructFile(arg1) {
+  return window['go']['main']['App']['ReconstructFile'](arg1);
+}
+
 export function SaveChunks(arg1, arg2) {
   return window['go']['main']['App']['SaveChunks'](arg1, arg2);
 }
 
 export function ScheduleFileProcessing(arg1) {
   return window['go']['main']['App']['ScheduleFileProcessing'](arg1);
+}
+
+export function SendAllChunks(arg1, arg2) {
+  return window['go']['main']['App']['SendAllChunks'](arg1, arg2);
 }
 
 export function SendFile(arg1, arg2) {

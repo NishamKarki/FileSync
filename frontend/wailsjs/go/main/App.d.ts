@@ -18,12 +18,14 @@ export function HandleFileEvent(arg1:fsnotify.Event):Promise<void>;
 
 export function PingDevice(arg1:string):Promise<network.PingResponse>;
 
+export function ReconstructFile(arg1:string):Promise<void>;
+
 export function SaveChunks(arg1:string,arg2:Array<main.Chunk>):Promise<void>;
+
+export function ScheduleFileProcessing(arg1:string):Promise<void>;
+
+export function SendAllChunks(arg1:string,arg2:string):Promise<void>;
 
 export function SendFile(arg1:string,arg2:string):Promise<void>;
 
 export function SendFirstChunk(arg1:string,arg2:string):Promise<void>;
-
-export function ScheduleFileProcessing(arg1:string):Promise<void>;
-
-export function SendFile(arg1:string,arg2:string):Promise<void>;

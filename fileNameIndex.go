@@ -1,3 +1,5 @@
+// Author: Nisham Karki
+
 package main
 
 import (
@@ -36,7 +38,7 @@ func GetAvailableFilePath(
 			newFileName = fileName
 		} else {
 
-			// Example:
+			// Give index to file names
 			// report (1).docx
 			// report (2).docx
 			newFileName = fmt.Sprintf(
@@ -58,24 +60,22 @@ func GetAvailableFilePath(
 			destinationFilePath,
 		)
 
-		// File does not exist, so this name is available
+		// File does not exist, so this name is available to use
 		if os.IsNotExist(destinationCheckError) {
 			return destinationFilePath, false
 		}
 
-		// File exists, so compare contents
+		// File exists, so compare contents of the files
 		sameFileOpened := CompareFiles(
 			selectedFilePath,
 			destinationFilePath,
 		)
 
-		// Same contents means it is already synced
+		// Same contents means that it is already synced
 		if sameFileOpened {
 			return destinationFilePath, true
 		}
 
-		// Different file with same name
-		// Try next index
 		fileIndex++
 	}
 }
