@@ -72,8 +72,18 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 		return
 	}
 
+	//Rabindra Neupane
+	// Watcher implementation: Nisham Karki
+	// Ignore only bytes already accepted as a remote version, not later user edits.
+	app.fileProcessingMutex.Lock()
+	defer app.fileProcessingMutex.Unlock()
+	if app.matchesRemoteFile(fileWatcherEvent.Name) {
+		return
+	}
+
 	// Check for Files create event
-	if fileWatcherEvent.Op == fsnotify.Create {
+	//Rabindra Neupane
+	if fileWatcherEvent.Op&fsnotify.Create != 0 {
 		fmt.Println("CREATE:", fileName)
 
 		// Delay processing breifly in case the file is still being created
@@ -89,7 +99,8 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 
 	// Check for Files Write (modified) event
 	// Copying a file into Synced File also trigger Write event
-	if fileWatcherEvent.Op == fsnotify.Write {
+	//Rabindra Neupane
+	if fileWatcherEvent.Op&fsnotify.Write != 0 {
 		fmt.Println("WRITE:", fileName)
 
 		// Delay processing until write events is completed
@@ -104,7 +115,8 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	}
 
 	// Check for Files rename event
-	if fileWatcherEvent.Op == fsnotify.Rename {
+	//Rabindra Neupane
+	if fileWatcherEvent.Op&fsnotify.Rename != 0 {
 		fmt.Println("RENAME:", fileName)
 
 		// Notify the frontend the file rename event
@@ -114,7 +126,8 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	}
 
 	// Check for Files delete event
-	if fileWatcherEvent.Op == fsnotify.Remove {
+	//Rabindra Neupane
+	if fileWatcherEvent.Op&fsnotify.Remove != 0 {
 		fmt.Println("REMOVE:", fileName)
 
 		// Convert the deteled/removed file path into relative file path
@@ -137,6 +150,10 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 
 	// Lock the timer before reading or changing it
 	app.timerMutex.Lock()
+	//Rabindra Neupane
+	if app.fileTimers == nil {
+		app.fileTimers = make(map[string]*time.Timer)
+	}
 
 	// Check if the file already has a timer
 	existingTimer, timerExists := app.fileTimers[filePath]
@@ -159,6 +176,14 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 			delete(app.fileTimers, filePath)
 
 			app.timerMutex.Unlock()
+
+			//Rabindra Neupane
+			// A pending timer may predate remote application. Check again here.
+			app.fileProcessingMutex.Lock()
+			defer app.fileProcessingMutex.Unlock()
+			if app.matchesRemoteFile(filePath) {
+				return
+			}
 
 			// Check if file still exists before processing it
 			fileInfo, fileCheckerError := os.Stat(filePath)

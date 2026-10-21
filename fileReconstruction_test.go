@@ -18,7 +18,8 @@ func TestVerifiedIncomingReconstruction(t *testing.T) {
 			root := t.TempDir()
 			chunkRoot := filepath.Join(root, "incoming")
 			folder := filepath.Join(chunkRoot, "test.txt")
-			outputRoot := filepath.Join(root, "Reconstructed Files")
+			//Rabindra Neupane
+			outputRoot := filepath.Join(root, "Synced Files")
 			for _, directory := range []string{folder, outputRoot} {
 				if err := os.MkdirAll(directory, 0755); err != nil {
 					t.Fatal(err)
@@ -29,9 +30,12 @@ func TestVerifiedIncomingReconstruction(t *testing.T) {
 				content = ""
 			}
 			hash := sha256.Sum256([]byte(content))
-			metadata := network.FileMetadata{FileName: "test.txt", FileSize: int64(len(content)), FileHash: hex.EncodeToString(hash[:])}
+			//Rabindra Neupane
+			base := 1
+			metadata := network.FileMetadata{FileID: "test.txt", FileName: "test.txt", Version: 2, BaseVersion: &base, ChunkSize: chunkSize, FileSize: int64(len(content)), FileHash: hex.EncodeToString(hash[:])}
 			if content != "" {
-				metadata.ChunkHashes = []string{"chunk hash checked by receiver"}
+				//Rabindra Neupane
+				metadata.ChunkHashes = []string{hex.EncodeToString(hash[:])}
 				if err := os.WriteFile(filepath.Join(folder, "chunk_0.chunk"), []byte(content), 0644); err != nil {
 					t.Fatal(err)
 				}
@@ -49,8 +53,21 @@ func TestVerifiedIncomingReconstruction(t *testing.T) {
 			if err := os.WriteFile(output, []byte("previous"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			app := &App{reconstructedFilesPath: outputRoot}
-			err := app.completeIncomingTransfer(metadata, chunkRoot)
+			//Rabindra Neupane
+			db, err := InitDatabase(outputRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			app := &App{syncFolderPath: outputRoot, db: db}
+			previousChunks, err := app.ChunkFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := RecordFileVersion(db, outputRoot, output, "test-device", previousChunks); err != nil {
+				t.Fatal(err)
+			}
+			err = app.completeIncomingTransfer(metadata, chunkRoot)
 			valid := name == "valid" || name == "empty file"
 			if valid && err != nil {
 				t.Fatal(err)

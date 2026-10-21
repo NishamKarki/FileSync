@@ -21,8 +21,9 @@ func TestSyncFileEndToEnd(t *testing.T) {
 	sourceRoot := t.TempDir()
 	receiverRoot := t.TempDir()
 	source := &App{ctx: context.Background(), syncFolderPath: filepath.Join(sourceRoot, "Synced Files")}
-	receiver := &App{reconstructedFilesPath: filepath.Join(receiverRoot, "Reconstructed Files")}
-	for _, path := range []string{source.syncFolderPath, receiver.reconstructedFilesPath} {
+	//Rabindra Neupane
+	receiver := &App{syncFolderPath: filepath.Join(receiverRoot, "Synced Files"), reconstructedFilesPath: filepath.Join(receiverRoot, "Reconstructed Files")}
+	for _, path := range []string{source.syncFolderPath, receiver.syncFolderPath, receiver.reconstructedFilesPath} {
 		if err := os.MkdirAll(path, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -33,6 +34,13 @@ func TestSyncFileEndToEnd(t *testing.T) {
 	}
 	defer db.Close()
 	source.db = db
+	//Rabindra Neupane
+	receiverDB, err := InitDatabase(receiver.syncFolderPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiverDB.Close()
+	receiver.db = receiverDB
 	handler := network.NewTransferHandler(receiverRoot, receiver.completeIncomingTransfer)
 	uploads := 0
 	completionFailure := false
@@ -85,7 +93,8 @@ func TestSyncFileEndToEnd(t *testing.T) {
 				if err == nil || result != nil {
 					t.Fatal("reported success despite completion failure")
 				}
-				stored, readErr := os.ReadFile(filepath.Join(receiver.reconstructedFilesPath, fileName))
+				//Rabindra Neupane
+				stored, readErr := os.ReadFile(filepath.Join(receiver.syncFolderPath, fileName))
 				if readErr != nil || len(stored) != 0 {
 					t.Fatal("failed completion replaced previous empty file")
 				}
@@ -97,12 +106,21 @@ func TestSyncFileEndToEnd(t *testing.T) {
 			if result.ChunksSent != step.wanted {
 				t.Fatalf("unexpected result: %+v", result)
 			}
-			stored, err := os.ReadFile(filepath.Join(receiver.reconstructedFilesPath, fileName))
+			//Rabindra Neupane
+			stored, err := os.ReadFile(filepath.Join(receiver.syncFolderPath, fileName))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !bytes.Equal(stored, content) {
 				t.Fatal("receiver content differs")
+			}
+			//Rabindra Neupane
+			receivedChunks, err := receiver.ChunkFile(filepath.Join(receiver.syncFolderPath, fileName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := receiver.metadataForSync(fileName, receivedChunks); err != nil {
+				t.Fatalf("received file cannot be synced back: %v", err)
 			}
 			if result.ChunksSent == 0 && result.ChunkBytesSent != 0 {
 				t.Fatal("unchanged sync counted chunk bytes")

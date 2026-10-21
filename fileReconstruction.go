@@ -33,8 +33,9 @@ type StoredChunk struct {
 // the Synced Files folder. This prevents FileSync from leaving a
 // partially reconstructed file in the sync folder if reconstruction fails.
 //
-// After every chunk is successfully written, the temporary file
-// replaces the existing file inside the Synced Files folder.
+//Rabindra Neupane
+// Local checks save to Reconstructed Files. Incoming transfers reconstruct in
+// isolation before applyIncomingTransfer installs the verified file in Synced Files.
 func (app *App) ReconstructFile(fileName string) error {
 	//Rabindra Neupane
 	return app.reconstructFile(fileName, nil)
@@ -205,8 +206,8 @@ func (app *App) reconstructFile(fileName string, metadata *network.FileMetadata)
 		},
 	)
 
-	// Create the reconstructed file temporarily inside File Chunks.
-	// This folder is not watched by the FileSync file watcher.
+	//Rabindra Neupane
+	// Create temporary output in the configured folder outside Synced Files.
 	temporaryFile, temporaryFileCreationError :=
 		os.CreateTemp(
 			app.reconstructedFilesPath,
@@ -319,64 +320,33 @@ func (app *App) reconstructFile(fileName string, metadata *network.FileMetadata)
 		fileName,
 	)
 
-	// Remove the existing version only after the complete replacement
-	// file has been successfully reconstructed.
-	// Try several times to remove an older reconstructed copy.
-	// Some applications may temporarily keep the file locked
-	// while they finish reading or writing it.
-	var existingFileRemovalError error
-
-	for attempt := 0; attempt < 5; attempt++ {
-
-		existingFileRemovalError =
-			os.Remove(destinationFilePath)
-
-		// File was removed successfully.
-		if existingFileRemovalError == nil {
-			break
-		}
-
-		// There is nothing to remove if the file does not already exist.
-		if os.IsNotExist(existingFileRemovalError) {
-			existingFileRemovalError = nil
-			break
-		}
-
-		fmt.Println(
-			"Reconstructed file is currently busy. Retrying...",
-		)
-
-		// Wait before trying again.
-		time.Sleep(
-			500 * time.Millisecond,
-		)
+	//Rabindra Neupane
+	// Reconstruction implementation: Nisham Karki
+	// Replace without deleting the previous output first.
+	if err := replaceVerifiedFile(temporaryFilePath, destinationFilePath); err != nil {
+		return fmt.Errorf("failed to replace reconstructed file: %w", err)
 	}
-
-	if existingFileRemovalError != nil {
-		return fmt.Errorf(
-			"failed to replace existing reconstructed file: %w",
-			existingFileRemovalError,
-		)
-	}
-
-	// Move the completed reconstructed file into Reconstructed Files folder
-	fileMoveError :=
-		os.Rename(
-			temporaryFilePath,
-			destinationFilePath,
-		)
-
-	if fileMoveError != nil {
-		return fmt.Errorf(
-			"failed to move reconstructed file: %w",
-			fileMoveError,
-		)
-	}
-
 	fmt.Println(
 		"FILE RECONSTRUCTED:",
 		destinationFilePath,
 	)
 
 	return nil
+}
+
+//Rabindra Neupane
+// Go's Windows rename uses MOVEFILE_REPLACE_EXISTING. A failed rename leaves
+// the original destination in place; retry temporary locks without deleting it.
+func replaceVerifiedFile(source, destination string) error {
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		err = os.Rename(source, destination)
+		if err == nil {
+			return nil
+		}
+		if attempt < 4 {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	return err
 }

@@ -28,6 +28,9 @@ type App struct {
 	timerMutex             sync.Mutex             // Protects fileTimer from being accessed by multiple go routine at the same time
 	//Rabindra Neupane
 	transferMutex sync.Mutex // Prevent overlapping outgoing transfers from this app.
+	//Rabindra Neupane
+	fileProcessingMutex sync.Mutex        // Serialize watcher processing with remote apply.
+	remoteFileHashes    map[string]string // Verified remote contents, guarded by fileProcessingMutex.
 }
 
 //Rabindra Neupane
@@ -226,13 +229,8 @@ func (a *App) startup(ctx context.Context) {
 // Reconstruction implementation: Nisham Karki
 // Network integration: Rabindra Neupane
 func (a *App) completeIncomingTransfer(metadata network.FileMetadata, chunkRoot string) error {
-	// Use only the path fields; do not copy the live app's mutex or database state.
-	transferApp := &App{
-		chunkStoragePath:       chunkRoot,
-		syncFolderPath:         a.syncFolderPath,
-		reconstructedFilesPath: a.reconstructedFilesPath,
-	}
-	return transferApp.reconstructFile(metadata.FileName, &metadata)
+	//Rabindra Neupane
+	return a.applyIncomingTransfer(metadata, chunkRoot)
 }
 
 // /Rabindra Neupane
