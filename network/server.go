@@ -97,7 +97,7 @@ func fileHandler(responseWriter http.ResponseWriter, request *http.Request) {
 //Rabindra Neupane
 // Reconstruction implementation: Nisham Karki
 // Network integration: Rabindra Neupane
-func StartServer(port string, reconstructFile func(string) error) {
+func StartServer(port string, reconstructFile func(string) error, completeTransfer func(FileMetadata, string) error) {
 	// Create a new HTTP ServeMux to handle incoming ping requests
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", pingHandler)
@@ -109,6 +109,13 @@ func StartServer(port string, reconstructFile func(string) error) {
 	})
 	// Compare metadata without writing chunks or replacing the destination file.
 	mux.HandleFunc("/file-metadata", fileMetadataHandler)
+	//Rabindra Neupane
+	projectDirectory, directoryError := os.Getwd()
+	if directoryError != nil {
+		fmt.Println("Cannot locate transfer storage:", directoryError)
+		return
+	}
+	mux.Handle("/transfer/", NewTransferHandler(projectDirectory, completeTransfer))
 
 	// Print server starting message to the console
 	fmt.Println("FileSync Network Server Starting...", port)

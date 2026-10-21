@@ -35,6 +35,23 @@ export namespace main {
 	        this.Hash = source["Hash"];
 	    }
 	}
+	//Rabindra Neupane
+	export class SyncResult {
+	    totalChunks: number;
+	    chunksSent: number;
+	    chunkBytesSent: number;
+
+	    static createFrom(source: any = {}) {
+	        return new SyncResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.totalChunks = source["totalChunks"];
+	        this.chunksSent = source["chunksSent"];
+	        this.chunkBytesSent = source["chunkBytesSent"];
+	    }
+	}
 
 }
 

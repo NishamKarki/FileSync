@@ -23,6 +23,19 @@ type FileMetadataComparison struct {
 	NeededChunks []int `json:"neededChunks"`
 }
 
+//Rabindra Neupane
+// TransferPlan identifies an isolated incoming transfer and its missing chunks.
+type TransferPlan struct {
+	TransferID   string `json:"transferId"`
+	NeededChunks []int  `json:"neededChunks"`
+}
+
+//Rabindra Neupane
+type TransferCompletion struct {
+	TransferID string `json:"transferId"`
+	Completed  bool   `json:"completed"`
+}
+
 type Device struct {
 	DeviceID     string `json:"id"`
 	DeviceName   string `json:"name"`

@@ -53,3 +53,8 @@ export function SendFile(arg1, arg2) {
 export function SendFirstChunk(arg1, arg2) {
   return window['go']['main']['App']['SendFirstChunk'](arg1, arg2);
 }
+
+//Rabindra Neupane
+export function SyncFile(arg1, arg2) {
+  return window['go']['main']['App']['SyncFile'](arg1, arg2);
+}

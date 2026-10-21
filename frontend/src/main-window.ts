@@ -5,7 +5,9 @@ import {
     GetLocalIP,
     SendFile,
     SendFirstChunk,
-    SendAllChunks
+    SendAllChunks,
+    //Rabindra Neupane
+    SyncFile
 } from '../wailsjs/go/main/App';
 
 // EventsOn calls runtime event from file modification detected by fileWatcher.go
@@ -88,6 +90,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
         <footer class="footer">
             <button id="sync-now-button">Sync Now</button>
+            <!-- Rabindra Neupane -->
+            <button id="send-whole-file-button">Send Whole File</button>
             <button id="send-all-chunks-button">Send All Chunk</button>
 
             <div>
@@ -178,8 +182,21 @@ let selectedFileName: string | null = null;
 // Use to populate "Recent activity" section with recently modified files
 const recentFileActivity = document.getElementById('recent-activity')
 
-const syncNowButton = document.getElementById('sync-now-button');
+//Rabindra Neupane
+let transferInProgress = false;
+function setTransferBusy(busy: boolean) {
+    transferInProgress = busy;
+    for (const id of ['sync-now-button', 'send-all-chunks-button', 'send-whole-file-button', 'test-chunk-button']) {
+        const button = document.querySelector<HTMLButtonElement>(`#${id}`);
+        if (button) button.disabled = busy;
+    }
+}
+
+//Rabindra Neupane
+const syncNowButton = document.querySelector<HTMLButtonElement>('#sync-now-button');
 syncNowButton?.addEventListener('click', async () => {
+    //Rabindra Neupane
+    if (transferInProgress) return;
     // If no file is selected, prompt the user to select a file first.
     if (!selectedFileName) {
         console.log("Please select a file to sync first.");
@@ -203,29 +220,70 @@ syncNowButton?.addEventListener('click', async () => {
         return;
     }
 
+    //Rabindra Neupane
+    const transferFileName = selectedFileName;
+    const transferDeviceAddress = selectedDeviceAddress;
+    const buttonLabel = syncNowButton.textContent;
+    setTransferBusy(true);
+    syncNowButton.textContent = 'Syncing...';
     try {
-        console.log("Sending file:", selectedFileName, "to device:", selectedDeviceAddress);
+        console.log("Syncing changed chunks of:", transferFileName, "to device:", transferDeviceAddress);
 
         // Update the recent activity section to inform the user that sending is in progress
         if (recentFileActivity) {
-            recentFileActivity.textContent = `Sending ${selectedFileName} to ${selectedDeviceAddress}...`;
+            //Rabindra Neupane
+            recentFileActivity.textContent = `Checking and syncing ${transferFileName}...`;
         }
 
-        await SendFile(selectedDeviceAddress, selectedFileName);
+        //Rabindra Neupane
+        const result = await SyncFile(transferDeviceAddress, transferFileName);
 
         // Update the recent activity section to inform the user that the file has been synced successfully
         if (recentFileActivity) {
-            recentFileActivity.textContent = `${selectedFileName} synced successfully to ${selectedDeviceAddress}`;
+            //Rabindra Neupane
+            recentFileActivity.textContent = `${transferFileName} verified on receiver. Sent ${result.chunksSent} of ${result.totalChunks} chunks (${result.chunkBytesSent} bytes of chunk data; excludes metadata and HTTP overhead).`;
         }
         console.log("File sent successfully");
     }
     catch (error) {
         // Update the recent activity section to inform the user that the sync failed
         if (recentFileActivity) {
-            recentFileActivity.textContent = `Failed to sync ${selectedFileName} to ${selectedDeviceAddress}`;
+            //Rabindra Neupane
+            recentFileActivity.textContent = `Failed to sync ${transferFileName}: ${error}`;
         }
 
         console.error("Failed to send file", error);
+    }
+    //Rabindra Neupane
+    finally {
+        setTransferBusy(false);
+        syncNowButton.textContent = buttonLabel;
+    }
+});
+
+//Rabindra Neupane
+// Keep whole-file transfer available for the proposal's performance comparison.
+const wholeFileButton = document.querySelector<HTMLButtonElement>('#send-whole-file-button');
+wholeFileButton?.addEventListener('click', async () => {
+    if (transferInProgress) return;
+    if (!selectedFileName || !selectedDeviceAddress) {
+        if (recentFileActivity) recentFileActivity.textContent = 'Please select a file and device first.';
+        return;
+    }
+    const fileName = selectedFileName;
+    const address = selectedDeviceAddress;
+    const label = wholeFileButton.textContent;
+    setTransferBusy(true);
+    wholeFileButton.textContent = 'Sending file...';
+    try {
+        if (recentFileActivity) recentFileActivity.textContent = `Sending the whole file ${fileName}...`;
+        await SendFile(address, fileName);
+        if (recentFileActivity) recentFileActivity.textContent = `Whole file ${fileName} received in Synced Files.`;
+    } catch (error) {
+        if (recentFileActivity) recentFileActivity.textContent = `Whole-file transfer failed: ${error}`;
+    } finally {
+        setTransferBusy(false);
+        wholeFileButton.textContent = label;
     }
 });
 
@@ -271,6 +329,8 @@ EventsOn('file-change', (modifiedFile: string) => {
 // Test chunk button event listener
 const testChunkButton = document.getElementById('test-chunk-button')
 testChunkButton?.addEventListener('click', async () => {
+	//Rabindra Neupane
+	if (transferInProgress) return;
 
     // Send the first chunk of the selected file to the selected device
     if (!selectedFileName) {
@@ -292,6 +352,8 @@ testChunkButton?.addEventListener('click', async () => {
         return;
     }
 
+    //Rabindra Neupane
+    setTransferBusy(true);
     // Attempt to send the first chunk of the selected file to the selected device
     try {
         console.log("Sending first chunk of", selectedFileName, "to", selectedDeviceAddress);
@@ -318,12 +380,22 @@ testChunkButton?.addEventListener('click', async () => {
             recentFileActivity.textContent = `Failed to send first chunk of ${selectedFileName}.`;
         }
     }
+    //Rabindra Neupane
+    finally {
+        setTransferBusy(false);
+    }
 });
 
 ///Rabindra Neupane
 // Send all chunks of the selected file to the selected device
-const sendAllChunksButton = document.getElementById('send-all-chunks-button')
+//Rabindra Neupane
+const sendAllChunksButton = document.querySelector<HTMLButtonElement>('#send-all-chunks-button');
 sendAllChunksButton?.addEventListener('click', async () => {
+
+    //Rabindra Neupane
+    if (transferInProgress) {
+        return;
+    }
 
     // Send all chunks of the selected file to the selected device
     if(! selectedFileName) {
@@ -345,26 +417,44 @@ sendAllChunksButton?.addEventListener('click', async () => {
         return;
     }
 
+    //Rabindra Neupane
+    // Lock the button before awaiting the transfer and keep its original label.
+    const buttonLabel = sendAllChunksButton.textContent;
+    const transferFileName = selectedFileName;
+    const transferDeviceAddress = selectedDeviceAddress;
+    setTransferBusy(true);
+    sendAllChunksButton.textContent = 'Sending chunks...';
+
     // Attempt to send all chunks of the selected file to the selected device
     try {
-        console.log("Sending all chunks of", selectedFileName, "to", selectedDeviceAddress);
+        //Rabindra Neupane
+        console.log("Sending all chunks of", transferFileName, "to", transferDeviceAddress);
 
         // Update the recent file activity to indicate that sending is in progress
         if (recentFileActivity) {
-            recentFileActivity.textContent = `Sending all chunks of ${selectedFileName}...`;
+            //Rabindra Neupane
+            recentFileActivity.textContent = `Sending all chunks of ${transferFileName}...`;
         }
 
-        await SendAllChunks(selectedDeviceAddress, selectedFileName);
+        //Rabindra Neupane
+        await SendAllChunks(transferDeviceAddress, transferFileName);
 
         if (recentFileActivity) {
-            recentFileActivity.textContent = `All chunks of ${selectedFileName} sent successfully.`;
+            //Rabindra Neupane
+            recentFileActivity.textContent = `All chunks of ${transferFileName} sent successfully.`;
         }
         console.log("All chunks sent successfully.");
     }
     catch (error) {
         console.error("Failed to send all chunks:", error);
         if (recentFileActivity) {
-            recentFileActivity.textContent = `Failed to send all chunks of ${selectedFileName}: ${error}`;
+            //Rabindra Neupane
+            recentFileActivity.textContent = `Failed to send all chunks of ${transferFileName}: ${error}`;
         }
+    }
+    //Rabindra Neupane
+    finally {
+        setTransferBusy(false);
+        sendAllChunksButton.textContent = buttonLabel;
     }
 });

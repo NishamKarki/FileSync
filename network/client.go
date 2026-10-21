@@ -9,10 +9,116 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
 )
+
+//Rabindra Neupane
+// StartChunkTransfer creates an isolated receiver snapshot and returns the
+// chunks needed there. Existing comparison-only requests remain read-only.
+func StartChunkTransfer(ctx context.Context, address string, metadata FileMetadata) (*TransferPlan, error) {
+	if err := validateFileMetadata(metadata); err != nil {
+		return nil, err
+	}
+	if metadata.ChunkSize > maxTransferChunkSize {
+		return nil, fmt.Errorf("chunk size exceeds 16 MiB transfer limit")
+	}
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+	var result TransferPlan
+	if err := transferRequest(ctx, address, "/transfer/start", "application/json", body, &result); err != nil {
+		return nil, err
+	}
+	if result.TransferID == "" || result.NeededChunks == nil {
+		return nil, fmt.Errorf("invalid transfer plan")
+	}
+	seen := make(map[int]bool)
+	for _, index := range result.NeededChunks {
+		if index < 0 || index >= len(metadata.ChunkHashes) || seen[index] {
+			return nil, fmt.Errorf("invalid needed chunk index")
+		}
+		seen[index] = true
+	}
+	return &result, nil
+}
+
+//Rabindra Neupane
+// SendTransferChunk stores one chunk in the transfer folder without reconstructing.
+func SendTransferChunk(ctx context.Context, address, transferID string, index int, data []byte) error {
+	query := url.Values{"transferId": {transferID}, "chunkIndex": {fmt.Sprint(index)}}
+	return transferRequest(ctx, address, "/transfer/chunk?"+query.Encode(), "application/octet-stream", data, nil)
+}
+
+//Rabindra Neupane
+// CompleteChunkTransfer succeeds only after the receiver verifies and reconstructs.
+func CompleteChunkTransfer(ctx context.Context, address, transferID string) error {
+	body, err := json.Marshal(struct {
+		TransferID string `json:"transferId"`
+	}{transferID})
+	if err != nil {
+		return err
+	}
+	var result TransferCompletion
+	if err := transferRequest(ctx, address, "/transfer/complete", "application/json", body, &result); err != nil {
+		return err
+	}
+	if result.TransferID != transferID || !result.Completed {
+		return fmt.Errorf("receiver did not confirm completion")
+	}
+	return nil
+}
+
+//Rabindra Neupane
+func transferRequest(ctx context.Context, address, path, contentType string, body []byte, result interface{}) error {
+	limit := 8 << 20
+	if contentType == "application/octet-stream" {
+		limit = maxTransferChunkSize
+	}
+	if len(body) > limit {
+		return fmt.Errorf("transfer request exceeds size limit")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+address+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", contentType)
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	defer client.CloseIdleConnections()
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("transfer request: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("transfer request failed: %s", response.Status)
+	}
+	if result == nil {
+		return nil
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > 8<<20 {
+		return fmt.Errorf("transfer response exceeds size limit")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(result); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("expected one transfer response")
+	}
+	return nil
+}
 
 // CompareFileMetadata asks a peer which chunks it needs. The address uses the
 // same host:port format as SendChunk. This does not send file content or confirm

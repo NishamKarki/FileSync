@@ -3,6 +3,9 @@
 package main
 
 import (
+	"FileSyncWails/network"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -33,6 +36,14 @@ type StoredChunk struct {
 // After every chunk is successfully written, the temporary file
 // replaces the existing file inside the Synced Files folder.
 func (app *App) ReconstructFile(fileName string) error {
+	//Rabindra Neupane
+	return app.reconstructFile(fileName, nil)
+}
+
+//Rabindra Neupane
+// Reconstruction implementation: Nisham Karki
+// Transfer size and hash verification: Rabindra Neupane
+func (app *App) reconstructFile(fileName string, metadata *network.FileMetadata) error {
 
 	// Use only the actual file name to prevent folder paths
 	// from being included in the reconstruction request.
@@ -122,7 +133,11 @@ func (app *App) ReconstructFile(fileName string) error {
 	// If no chunks exist, check whether the original file is actually empty.
 	// An empty file correctly produces zero chunks, so FileSync should
 	// reconstruct it as an empty file instead of treating it as an error.
-	if len(storedChunks) == 0 {
+	//Rabindra Neupane
+	if metadata != nil && len(storedChunks) != len(metadata.ChunkHashes) {
+		return fmt.Errorf("stored chunk count does not match transfer metadata")
+	}
+	if len(storedChunks) == 0 && metadata == nil {
 
 		originalFilePath := filepath.Join(
 			app.syncFolderPath,
@@ -275,6 +290,27 @@ func (app *App) ReconstructFile(fileName string) error {
 
 	if temporaryFileCloseError != nil {
 		return temporaryFileCloseError
+	}
+
+	//Rabindra Neupane
+	// Verify the temporary output before touching an existing reconstructed file.
+	if metadata != nil {
+		output, err := os.Open(temporaryFilePath)
+		if err != nil {
+			return err
+		}
+		hasher := sha256.New()
+		size, readError := io.Copy(hasher, output)
+		closeError := output.Close()
+		if readError != nil {
+			return readError
+		}
+		if closeError != nil {
+			return closeError
+		}
+		if size != metadata.FileSize || hex.EncodeToString(hasher.Sum(nil)) != metadata.FileHash {
+			return fmt.Errorf("reconstructed file failed size or SHA-256 verification")
+		}
 	}
 
 	// Create the final location of the reconstructed file.
