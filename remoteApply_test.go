@@ -32,7 +32,8 @@ func incomingTestApp(t *testing.T) *App {
 }
 
 //Rabindra Neupane
-func incomingTestMetadata(t *testing.T, data string, version int) (network.FileMetadata, string) {
+//Rabindra Neupane
+func incomingTestMetadata(t *testing.T, data string, version int, baseData ...string) (network.FileMetadata, string) {
 	t.Helper()
 	root := t.TempDir()
 	folder := filepath.Join(root, "received.txt")
@@ -50,6 +51,14 @@ func incomingTestMetadata(t *testing.T, data string, version int) (network.FileM
 	if version > 1 {
 		base := version - 1
 		metadata.BaseVersion = &base
+	}
+	//Rabindra Neupane
+	if len(baseData) > 0 {
+		metadata.BaseChunkHashes = []string{}
+		if baseData[0] != "" {
+			hash := sha256.Sum256([]byte(baseData[0]))
+			metadata.BaseChunkHashes = []string{hex.EncodeToString(hash[:])}
+		}
 	}
 	return metadata, root
 }
@@ -156,7 +165,8 @@ func TestIncomingMetadataFailurePreservesDestination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, nextRoot := incomingTestMetadata(t, "new remote", 2)
+	//Rabindra Neupane
+	next, nextRoot := incomingTestMetadata(t, "new remote", 2, "original")
 	if err := app.completeIncomingTransfer(next, nextRoot); err == nil {
 		t.Fatal("expected metadata failure")
 	}
@@ -207,7 +217,8 @@ func TestIncomingCommitFailureRestoresPreviousFile(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	next, nextRoot := incomingTestMetadata(t, "replacement", 2)
+	//Rabindra Neupane
+	next, nextRoot := incomingTestMetadata(t, "replacement", 2, "original")
 	if err := app.completeIncomingTransfer(next, nextRoot); err == nil {
 		t.Fatal("expected commit failure")
 	}

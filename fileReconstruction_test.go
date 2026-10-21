@@ -33,6 +33,9 @@ func TestVerifiedIncomingReconstruction(t *testing.T) {
 			//Rabindra Neupane
 			base := 1
 			metadata := network.FileMetadata{FileID: "test.txt", FileName: "test.txt", Version: 2, BaseVersion: &base, ChunkSize: chunkSize, FileSize: int64(len(content)), FileHash: hex.EncodeToString(hash[:])}
+			//Rabindra Neupane
+			previousHash := sha256.Sum256([]byte("previous"))
+			metadata.BaseChunkHashes = []string{hex.EncodeToString(previousHash[:])}
 			if content != "" {
 				//Rabindra Neupane
 				metadata.ChunkHashes = []string{hex.EncodeToString(hash[:])}

@@ -4,7 +4,6 @@ import {
     DiscoverDevices,
     GetLocalIP,
     SendFile,
-    SendFirstChunk,
     SendAllChunks,
     //Rabindra Neupane
     SyncFile
@@ -186,7 +185,7 @@ const recentFileActivity = document.getElementById('recent-activity')
 let transferInProgress = false;
 function setTransferBusy(busy: boolean) {
     transferInProgress = busy;
-    for (const id of ['sync-now-button', 'send-all-chunks-button', 'send-whole-file-button', 'test-chunk-button']) {
+    for (const id of ['sync-now-button', 'send-all-chunks-button', 'send-whole-file-button']) {
         const button = document.querySelector<HTMLButtonElement>(`#${id}`);
         if (button) button.disabled = busy;
     }
@@ -237,6 +236,11 @@ syncNowButton?.addEventListener('click', async () => {
 
         //Rabindra Neupane
         const result = await SyncFile(transferDeviceAddress, transferFileName);
+		//Rabindra Neupane
+		if (result.conflictFile) {
+			if (recentFileActivity) recentFileActivity.textContent = `Conflict for ${transferFileName}. Receiver kept its current file and saved the incoming copy at ${result.conflictFile}.`;
+			return;
+		}
 
         // Update the recent activity section to inform the user that the file has been synced successfully
         if (recentFileActivity) {
@@ -325,67 +329,8 @@ EventsOn('file-change', (modifiedFile: string) => {
     }
 })
 
-/// Rabindra Neupane
-// Test chunk button event listener
-const testChunkButton = document.getElementById('test-chunk-button')
-testChunkButton?.addEventListener('click', async () => {
-	//Rabindra Neupane
-	if (transferInProgress) return;
-
-    // Send the first chunk of the selected file to the selected device
-    if (!selectedFileName) {
-        console.log("Please select a file firsr.");
-
-        if (recentFileActivity) {
-            recentFileActivity.textContent = "Please select a file first.";
-        }
-        return;
-    }
-
-    // Check if a FileSync device is selected
-    if (!selectedDeviceAddress) {
-        console.log("Please select a FileSync device first.");
-
-        if (recentFileActivity) {
-            recentFileActivity.textContent = "Please select a device first.";
-        }
-        return;
-    }
-
-    //Rabindra Neupane
-    setTransferBusy(true);
-    // Attempt to send the first chunk of the selected file to the selected device
-    try {
-        console.log("Sending first chunk of", selectedFileName, "to", selectedDeviceAddress);
-
-        // Update the recent file activity to indicate that sending is in progress
-        if (recentFileActivity) {
-            recentFileActivity.textContent = `Sending first chunk of ${selectedFileName}...`;
-        }
-
-        // Send the first chunk of the selected file to the selected device
-        await SendFirstChunk(selectedDeviceAddress, selectedFileName);
-        console.log("First chunk sent successfully.");
-
-        // Update the recent file activity to reflect successful sending of the first chunk
-        if (recentFileActivity) {
-            recentFileActivity.textContent = `First chunk of ${selectedFileName} sent successfully.`;
-        }
-    }
-    // Handle any errors that occur during the sending process
-    catch (error) {
-        console.error("Failed to send first chunk:", error);
-        // Update the recent file activity to reflect the failure
-        if (recentFileActivity) {
-            recentFileActivity.textContent = `Failed to send first chunk of ${selectedFileName}.`;
-        }
-    }
-    //Rabindra Neupane
-    finally {
-        setTransferBusy(false);
-    }
-});
-
+//Rabindra Neupane
+// Removed the unused first-chunk button handler.
 ///Rabindra Neupane
 // Send all chunks of the selected file to the selected device
 //Rabindra Neupane

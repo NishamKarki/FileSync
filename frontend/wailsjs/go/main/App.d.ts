@@ -28,7 +28,4 @@ export function SendAllChunks(arg1:string,arg2:string):Promise<void>;
 
 export function SendFile(arg1:string,arg2:string):Promise<void>;
 
-export function SendFirstChunk(arg1:string,arg2:string):Promise<void>;
-
-//Rabindra Neupane
 export function SyncFile(arg1:string,arg2:string):Promise<main.SyncResult>;

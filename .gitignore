@@ -5,3 +5,5 @@
 /frontend/dist/
 /frontend/node_modules/
 *.db
+# Rabindra Neupane - preserved incoming conflict copies are runtime data.
+/Conflicting Files/

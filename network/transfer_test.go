@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -118,6 +119,37 @@ func TestIsolatedChunkTransfer(t *testing.T) {
 	// A second transfer gets its own folder and ID.
 	if second.TransferID == plan.TransferID || receiver.transfers[second.TransferID].root == receiver.transfers[plan.TransferID].root {
 		t.Fatal("transfers share identity/storage")
+	}
+}
+
+//Rabindra Neupane
+func TestConflictCompletionReplay(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(NewTransferHandler(t.TempDir(), func(FileMetadata, string) error {
+		calls++
+		return &SyncConflictError{ConflictFile: "Conflicting Files/sample.conflict.txt"}
+	}))
+	defer server.Close()
+	address := strings.TrimPrefix(server.URL, "http://")
+	ctx := context.Background()
+	plan, err := StartChunkTransfer(ctx, address, testFileMetadata())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, data := range []string{"abcd", "ef"} {
+		if err := SendTransferChunk(ctx, address, plan.TransferID, index, []byte(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		err := CompleteChunkTransfer(ctx, address, plan.TransferID)
+		var conflict *SyncConflictError
+		if !errors.As(err, &conflict) || conflict.ConflictFile != "Conflicting Files/sample.conflict.txt" {
+			t.Fatalf("conflict result lost: %v", err)
+		}
+	}
+	if calls != 1 {
+		t.Fatal("retry reapplied the conflicting transfer")
 	}
 }
 

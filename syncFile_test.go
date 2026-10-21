@@ -70,9 +70,13 @@ func TestSyncFileEndToEnd(t *testing.T) {
 		{"one byte edit", func() { content[chunkSize+5] = 'X' }, 1, false},
 		{"truncate", func() { content = content[:chunkSize+9] }, 1, false},
 		{"empty", func() { content = nil }, 0, false},
+		//Rabindra Neupane
+		{"grow after empty base", func() { content = []byte("after empty") }, 1, false},
 		{"completion failure", func() { content = []byte("new version"); completionFailure = true }, 1, true},
 	} {
 		t.Run(step.name, func(t *testing.T) {
+			//Rabindra Neupane
+			previous, _ := os.ReadFile(filepath.Join(receiver.syncFolderPath, fileName))
 			step.change()
 			if err := os.WriteFile(path, content, 0644); err != nil {
 				t.Fatal(err)
@@ -95,8 +99,9 @@ func TestSyncFileEndToEnd(t *testing.T) {
 				}
 				//Rabindra Neupane
 				stored, readErr := os.ReadFile(filepath.Join(receiver.syncFolderPath, fileName))
-				if readErr != nil || len(stored) != 0 {
-					t.Fatal("failed completion replaced previous empty file")
+				//Rabindra Neupane
+				if readErr != nil || !bytes.Equal(stored, previous) {
+					t.Fatal("failed completion replaced the previous file")
 				}
 				return
 			}
@@ -191,6 +196,16 @@ func TestSyncFileSendsRecordedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
+		//Rabindra Neupane
+		if i == 1 {
+			if err := os.WriteFile(path, []byte("next"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			chunks, err = app.ChunkFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		if err := RecordFileVersion(db, root, path, "device", chunks); err != nil {
 			t.Fatal(err)
 		}
@@ -201,6 +216,10 @@ func TestSyncFileSendsRecordedVersion(t *testing.T) {
 	}
 	if metadata.Version != 2 || metadata.BaseVersion == nil || *metadata.BaseVersion != 1 {
 		t.Fatalf("wrong version: %+v", metadata)
+	}
+	//Rabindra Neupane
+	if len(metadata.BaseChunkHashes) != 1 || metadata.BaseChunkHashes[0] == chunks[0].Hash {
+		t.Fatal("missing original base content identity")
 	}
 }
 
@@ -216,5 +235,79 @@ func TestSyncFileRejectsInvalidReceiverPlan(t *testing.T) {
 				t.Fatal("accepted invalid plan")
 			}
 		})
+	}
+}
+
+//Rabindra Neupane
+// Concurrent edits preserve the receiver's file, its metadata, and its cache;
+// the sender receives a conflict result rather than a false sync-success result.
+func TestSyncFileReportsPreservedConflict(t *testing.T) {
+	source := incomingTestApp(t)
+	receiver := incomingTestApp(t)
+	root := filepath.Dir(receiver.syncFolderPath)
+	server := httptest.NewServer(network.NewTransferHandler(root, receiver.completeIncomingTransfer))
+	defer server.Close()
+	address := strings.TrimPrefix(server.URL, "http://")
+	fileName := "received.txt"
+	writeVersion := func(app *App, data string) {
+		path := filepath.Join(app.syncFolderPath, fileName)
+		if err := os.WriteFile(path, []byte(data), 0644); err != nil {
+			t.Fatal(err)
+		}
+		chunks, err := app.ChunkFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := RecordFileVersion(app.db, app.syncFolderPath, path, "device", chunks); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeVersion(source, "common")
+	if _, err := source.SyncFile(address, fileName); err != nil {
+		t.Fatal(err)
+	}
+	//Rabindra Neupane
+	// Several local saves before the next sync are ordinary catch-up, not a conflict.
+	writeVersion(source, "intermediate edit")
+	writeVersion(source, "shared next")
+	catchup, err := source.SyncFile(address, fileName)
+	if err != nil || catchup.ConflictFile != "" {
+		t.Fatalf("lagging receiver could not catch up: %v", err)
+	}
+	writeVersion(source, "sender edit")
+	writeVersion(receiver, "receiver edit")
+	var conflictPath string
+	for attempt := 0; attempt < 2; attempt++ {
+		result, err := source.SyncFile(address, fileName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.ConflictFile == "" {
+			t.Fatal("conflict was reported as successful application")
+		}
+		if attempt == 0 {
+			conflictPath = result.ConflictFile
+		} else if conflictPath != result.ConflictFile {
+			t.Fatal("repeated conflict created another copy")
+		}
+		copy, err := os.ReadFile(filepath.Join(root, result.ConflictFile))
+		if err != nil || string(copy) != "sender edit" {
+			t.Fatal("incoming edit was not preserved")
+		}
+		active, err := os.ReadFile(filepath.Join(receiver.syncFolderPath, fileName))
+		if err != nil || string(active) != "receiver edit" {
+			t.Fatal("receiver edit was overwritten")
+		}
+		cache, err := os.ReadFile(filepath.Join(root, "File Chunks", fileName, "chunk_0.chunk"))
+		if err != nil || string(cache) != "shared next" {
+			t.Fatal("conflict polluted the accepted chunk cache")
+		}
+		var count int
+		if err := receiver.db.QueryRow("SELECT COUNT(*) FROM file_versions WHERE file_id=?", fileName).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 3 {
+			t.Fatal("conflict replaced receiver metadata")
+		}
 	}
 }

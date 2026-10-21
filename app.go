@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,6 +40,8 @@ type SyncResult struct {
 	TotalChunks    int   `json:"totalChunks"`
 	ChunksSent     int   `json:"chunksSent"`
 	ChunkBytesSent int64 `json:"chunkBytesSent"`
+	//Rabindra Neupane
+	ConflictFile string `json:"conflictFile,omitempty"`
 }
 
 //Rabindra Neupane
@@ -80,6 +83,12 @@ func (a *App) SyncFile(address, fileName string) (*SyncResult, error) {
 	}
 	// Even an unchanged or empty file needs explicit receiver verification.
 	if err := network.CompleteChunkTransfer(ctx, address, plan.TransferID); err != nil {
+		//Rabindra Neupane
+		var conflict *network.SyncConflictError
+		if errors.As(err, &conflict) {
+			result.ConflictFile = conflict.ConflictFile
+			return result, nil
+		}
 		return nil, fmt.Errorf("complete incremental sync: %w", err)
 	}
 	fmt.Printf("Verified sync of %s: %d/%d chunks, %d chunk data bytes (excluding metadata/HTTP)\n", fileName, result.ChunksSent, result.TotalChunks, result.ChunkBytesSent)
@@ -120,6 +129,16 @@ func (a *App) metadataForSync(fileName string, chunks []Chunk) (network.FileMeta
 	if base.Valid {
 		value := int(base.Int64)
 		metadata.BaseVersion = &value
+		//Rabindra Neupane
+		metadata.BaseChunkHashes, err = loadBaseChunkHashes(tx, fileName, value)
+		if err != nil {
+			return metadata, fmt.Errorf("read base version identity: %w", err)
+		}
+		//Rabindra Neupane
+		metadata.BaseRevisions, err = loadBaseRevisionHistory(tx, fileName, value)
+		if err != nil {
+			return metadata, fmt.Errorf("read base revision history: %w", err)
+		}
 	}
 	rows, err := tx.Query("SELECT chunk_index, chunk_hash FROM chunks WHERE file_version_id = ? ORDER BY chunk_index", versionID)
 	if err != nil {
@@ -274,39 +293,8 @@ func (a *App) SendFile(address string, fileName string) error {
 	return network.SendFile(address, filePath)
 }
 
-// /Rabindra Neupane
-// SendFirstChunk send the first chunk of a file to another FileSync device on the network
-// This is currently being used to test chunk based network transfer
-func (a *App) SendFirstChunk(address string, fileName string) error {
-	//Rabindra Neupane
-	if !a.transferMutex.TryLock() {
-		return fmt.Errorf("another file transfer is already running")
-	}
-	defer a.transferMutex.Unlock()
-	// Create path of the selectd file
-	filePath := filepath.Join(a.syncFolderPath, fileName)
-
-	// Generate file chunks to test chunk transfer
-	chunks, chunkError := a.ChunkFile(filePath)
-	if chunkError != nil {
-		return fmt.Errorf("failed to chunk file %s: %w", filePath, chunkError)
-	}
-
-	// Check if any chunks were created for the file
-	// Returns output if the selected file does not create any chunks
-	if len(chunks) == 0 {
-		return fmt.Errorf("no chunks created for file: %s", filePath)
-	}
-
-	// Select the first chunk to test for network transfer
-	firstChunk := chunks[0]
-
-	fmt.Printf("Sending chunk %d of %s to %s\n", firstChunk.Index, fileName, address)
-
-	// Send the selected chunk to the receving end of FileSync devices
-	return network.SendChunk(address, fileName, firstChunk.Index, len(chunks), firstChunk.Hash, firstChunk.Data)
-}
-
+//Rabindra Neupane
+// Removed the obsolete first-chunk experiment; retain full and incremental transfers.
 //Rabindra Neupane
 // SendAllChunks sends all chunks of a file to another FileSync device on the network
 func (a *App) SendAllChunks(address string, fileName string) error {

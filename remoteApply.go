@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 //Rabindra Neupane
@@ -86,6 +88,43 @@ func (a *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot str
 		return previousErr
 	}
 	hadPrevious := previousErr == nil
+	//Rabindra Neupane
+	// Compare actual bytes to the sender's base, never independent counters.
+	if hadPrevious && previousHash != metadata.FileHash {
+		matchesBase := false
+		if metadata.ChunkSize == chunkSize {
+			chunks, err := a.ChunkFile(destination)
+			if err != nil {
+				return err
+			}
+			matchesBase = metadata.BaseChunkHashes != nil && len(chunks) == len(metadata.BaseChunkHashes)
+			if matchesBase {
+				for index, chunk := range chunks {
+					if chunk.Hash != metadata.BaseChunkHashes[index] {
+						matchesBase = false
+						break
+					}
+				}
+			}
+			//Rabindra Neupane
+			if !matchesBase && len(metadata.BaseRevisions) > 0 {
+				hashes := make([]string, len(chunks))
+				for index, chunk := range chunks {
+					hashes[index] = chunk.Hash
+				}
+				identity := chunkRevisionIdentity(chunkSize, hashes)
+				for _, ancestor := range metadata.BaseRevisions {
+					if ancestor == identity {
+						matchesBase = true
+						break
+					}
+				}
+			}
+		}
+		if !matchesBase {
+			return a.preserveIncomingConflict(metadata, verified)
+		}
+	}
 	// Preserve a rollback copy outside the watched folder before any replacement.
 	backupRoot, err := os.MkdirTemp(outputRoot, "backup-")
 	if err != nil {
@@ -102,7 +141,7 @@ func (a *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot str
 		return err
 	}
 	defer tx.Rollback()
-	if err := a.recordReceivedVersion(tx, metadata, destination, hadPrevious); err != nil {
+	if err := a.recordReceivedVersion(tx, metadata); err != nil {
 		return err
 	}
 	// Recheck after metadata work so a user edit during verification isn't lost.
@@ -138,7 +177,8 @@ func (a *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot str
 		a.remoteFileHashes = make(map[string]string)
 	}
 	a.remoteFileHashes[filepath.Clean(destination)] = metadata.FileHash
-	fmt.Printf("Received and verified %s in Synced Files (version %d)\n", metadata.FileName, metadata.Version)
+	//Rabindra Neupane
+	fmt.Printf("Received and verified %s in Synced Files (sender version %d; recorded with receiver's local sequence)\n", metadata.FileName, metadata.Version)
 	return nil
 }
 
@@ -156,95 +196,113 @@ func copyRemoteBackup(source, destination string) error {
 	_, copyErr := io.Copy(output, input)
 	closeErr := output.Close()
 	if copyErr != nil {
+		//Rabindra Neupane
+		os.Remove(destination) // Exclusively created by this call; never a preexisting copy.
 		return copyErr
+	}
+	//Rabindra Neupane
+	if closeErr != nil {
+		os.Remove(destination)
 	}
 	return closeErr
 }
 
 //Rabindra Neupane
-// Preserve the sender's version/base and hashes using Santosh's existing tables.
-// Unknown sender device IDs stay NULL. Do not label a received update as a new
-// local version, downgrade newer versions, or overwrite unprocessed local edits.
-func (a *App) recordReceivedVersion(tx *sql.Tx, m network.FileMetadata, destination string, hadPrevious bool) error {
+// Version schema: Santosh Tripathee. Receiver mapping: Rabindra Neupane.
+// Sender counters are not shared revision IDs. Accepted contents get a local
+// sequence number and local parent; repeated identical contents reuse the row.
+func (a *App) recordReceivedVersion(tx *sql.Tx, m network.FileMetadata) error {
 	var current int
 	err := tx.QueryRow("SELECT current_version FROM files WHERE id = ?", m.FileID).Scan(&current)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
 	known := err == nil
-	if known && current > m.Version {
-		return fmt.Errorf("receiver has a newer file version")
-	}
-	if hadPrevious {
-		if !known {
-			hash, err := hashStoredFile(destination)
-			if err != nil {
-				return err
-			}
-			if hash != m.FileHash {
-				return fmt.Errorf("destination has untracked content; preserve or rename it before syncing")
-			}
-		} else {
-			chunks, err := a.ChunkFile(destination)
-			if err != nil {
-				return err
-			}
-			var versionID int64
-			if err := tx.QueryRow("SELECT id FROM file_versions WHERE file_id = ? AND version_number = ? ORDER BY id DESC LIMIT 1", m.FileID, current).Scan(&versionID); err != nil {
-				return err
-			}
-			if err := compareRecordedChunks(tx, versionID, chunks); err != nil {
-				return fmt.Errorf("destination has a local edit awaiting processing: %w", err)
-			}
+	if known {
+		var id int64
+		if err := tx.QueryRow("SELECT id FROM file_versions WHERE file_id = ? AND version_number = ? ORDER BY id DESC LIMIT 1", m.FileID, current).Scan(&id); err != nil {
+			return err
+		}
+		incoming := make([]Chunk, len(m.ChunkHashes))
+		for index, hash := range m.ChunkHashes {
+			incoming[index] = Chunk{Index: index, Hash: hash}
+		}
+		comparison := compareRecordedChunks(tx, id, incoming)
+		if comparison == nil {
+			_, err := tx.Exec("UPDATE files SET size = ? WHERE id = ?", m.FileSize, m.FileID)
+			return err
+		}
+		if !errors.Is(comparison, errVersionChunksDiffer) {
+			return comparison
 		}
 	}
-	var versionID int64
-	var base sql.NullInt64
-	err = tx.QueryRow("SELECT id, based_on_version FROM file_versions WHERE file_id = ? AND version_number = ? ORDER BY id DESC LIMIT 1", m.FileID, m.Version).Scan(&versionID, &base)
-	if err != nil && err != sql.ErrNoRows {
+	var maximum sql.NullInt64
+	if err := tx.QueryRow("SELECT MAX(version_number) FROM file_versions WHERE file_id = ?", m.FileID).Scan(&maximum); err != nil {
 		return err
 	}
-	versionExists := err == nil
-	if versionExists {
-		if (m.BaseVersion == nil) != !base.Valid || (m.BaseVersion != nil && int64(*m.BaseVersion) != base.Int64) {
-			return fmt.Errorf("received version conflicts with recorded base version")
-		}
-		chunks := make([]Chunk, len(m.ChunkHashes))
-		for index, hash := range m.ChunkHashes {
-			chunks[index] = Chunk{Index: index, Hash: hash}
-		}
-		if err := compareRecordedChunks(tx, versionID, chunks); err != nil {
-			return fmt.Errorf("received version conflicts with recorded chunk hashes")
-		}
+	next := current + 1
+	if maximum.Valid && int64(next) <= maximum.Int64 {
+		next = int(maximum.Int64) + 1
 	}
 	_, err = tx.Exec(`INSERT INTO files (id, path, name, current_version, size, modified_by)
-		VALUES (?, ?, ?, ?, ?, NULL)
-		ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version,
-		size=excluded.size, modified_by=NULL, updated_at=CURRENT_TIMESTAMP`, m.FileID, m.FileID, m.FileName, m.Version, m.FileSize)
+        VALUES (?, ?, ?, ?, ?, NULL)
+        ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version,
+        size=excluded.size, modified_by=NULL, updated_at=CURRENT_TIMESTAMP`, m.FileID, m.FileID, m.FileName, next, m.FileSize)
 	if err != nil {
 		return err
 	}
-	if !versionExists {
-		var basedOn interface{}
-		if m.BaseVersion != nil {
-			basedOn = *m.BaseVersion
-		}
-		result, err := tx.Exec("INSERT INTO file_versions (file_id, version_number, based_on_version, device_id) VALUES (?, ?, ?, NULL)", m.FileID, m.Version, basedOn)
-		if err != nil {
+	var parent interface{}
+	if known {
+		parent = current
+	}
+	result, err := tx.Exec("INSERT INTO file_versions (file_id, version_number, based_on_version, device_id) VALUES (?, ?, ?, NULL)", m.FileID, next, parent)
+	if err != nil {
+		return err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	for index, hash := range m.ChunkHashes {
+		if _, err := tx.Exec("INSERT INTO chunks (file_version_id, chunk_index, chunk_hash) VALUES (?, ?, ?)", id, index, hash); err != nil {
 			return err
-		}
-		versionID, err = result.LastInsertId()
-		if err != nil {
-			return err
-		}
-		for index, hash := range m.ChunkHashes {
-			if _, err := tx.Exec("INSERT INTO chunks (file_version_id, chunk_index, chunk_hash) VALUES (?, ?, ?)", versionID, index, hash); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
 }
+
+//Rabindra Neupane
+// Preserve incoming contents outside the watched folder and leave both the
+// accepted file's metadata and its chunk cache unchanged. Repeated conflicts
+// with identical contents reuse the same copy instead of multiplying files.
+func (a *App) preserveIncomingConflict(metadata network.FileMetadata, verified string) error {
+	folder := filepath.Join(filepath.Dir(a.syncFolderPath), "Conflicting Files")
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		return err
+	}
+	extension := filepath.Ext(metadata.FileName)
+	fileName := strings.TrimSuffix(metadata.FileName, extension) + ".conflict-" + metadata.FileHash + extension
+	destination := filepath.Join(folder, fileName)
+	existingHash, err := hashStoredFile(destination)
+	if err == nil {
+		if existingHash != metadata.FileHash {
+			return fmt.Errorf("existing conflict copy differs; preserve it before retrying")
+		}
+	} else if os.IsNotExist(err) {
+		if err := copyRemoteBackup(verified, destination); err != nil {
+			// copyRemoteBackup creates exclusively; never remove a preexisting file.
+			return fmt.Errorf("preserve incoming conflict: %w", err)
+		}
+	} else {
+		return err
+	}
+	relative := filepath.Join("Conflicting Files", fileName)
+	fmt.Printf("Synchronization conflict for %q: kept current file; incoming copy saved at %q\n", metadata.FileName, relative)
+	return &network.SyncConflictError{ConflictFile: relative}
+}
+
+//Rabindra Neupane
+var errVersionChunksDiffer = errors.New("version chunk contents differ")
 
 //Rabindra Neupane
 func compareRecordedChunks(tx *sql.Tx, versionID int64, chunks []Chunk) error {
@@ -261,7 +319,7 @@ func compareRecordedChunks(tx *sql.Tx, versionID int64, chunks []Chunk) error {
 			return err
 		}
 		if count >= len(chunks) || index != count || hash != chunks[count].Hash {
-			return fmt.Errorf("chunk hashes differ")
+			return fmt.Errorf("%w: chunk hashes differ", errVersionChunksDiffer)
 		}
 		count++
 	}
@@ -269,7 +327,7 @@ func compareRecordedChunks(tx *sql.Tx, versionID int64, chunks []Chunk) error {
 		return err
 	}
 	if count != len(chunks) {
-		return fmt.Errorf("chunk counts differ")
+		return fmt.Errorf("%w: chunk counts differ", errVersionChunksDiffer)
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,7 +21,9 @@ type incomingTransfer struct {
 	metadata  FileMetadata
 	root      string
 	completed bool
-	expires   time.Time
+	//Rabindra Neupane
+	conflictFile string
+	expires      time.Time
 }
 
 //Rabindra Neupane
@@ -254,7 +257,8 @@ func (receiver *transferReceiver) complete(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if transfer.completed {
-		writeTransferJSON(w, TransferCompletion{request.TransferID, true})
+		//Rabindra Neupane
+		writeTransferJSON(w, TransferCompletion{TransferID: request.TransferID, Completed: transfer.conflictFile == "", ConflictFile: transfer.conflictFile})
 		return
 	}
 	for index := range transfer.metadata.ChunkHashes {
@@ -272,6 +276,15 @@ func (receiver *transferReceiver) complete(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := receiver.reconstruct(transfer.metadata, transfer.root); err != nil {
+		//Rabindra Neupane
+		var conflict *SyncConflictError
+		if errors.As(err, &conflict) {
+			transfer.completed = true
+			transfer.conflictFile = conflict.ConflictFile
+			// Conflicting chunks must not replace the accepted file's cache.
+			writeTransferJSON(w, TransferCompletion{TransferID: request.TransferID, ConflictFile: conflict.ConflictFile})
+			return
+		}
 		//Rabindra Neupane
 		reportTransferFailure(w, request.TransferID, transfer.metadata.FileName, "Apply verified file", err, 500)
 		return
@@ -299,7 +312,8 @@ func (receiver *transferReceiver) complete(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	transfer.completed = true
-	writeTransferJSON(w, TransferCompletion{request.TransferID, true})
+	//Rabindra Neupane
+	writeTransferJSON(w, TransferCompletion{TransferID: request.TransferID, Completed: true})
 }
 
 //Rabindra Neupane

@@ -233,6 +233,18 @@ func validateFileMetadata(m FileMetadata) error {
 			return fmt.Errorf("Invalid chunk SHA-256 hash")
 		}
 	}
+	//Rabindra Neupane
+	for _, hash := range m.BaseChunkHashes {
+		if !validHash(hash) {
+			return fmt.Errorf("Invalid base chunk SHA-256 hash")
+		}
+	}
+	//Rabindra Neupane
+	for _, identity := range m.BaseRevisions {
+		if !validHash(identity) {
+			return fmt.Errorf("Invalid base revision identity")
+		}
+	}
 	if m.FileSize == 0 {
 		emptyHash := sha256.Sum256(nil)
 		if m.FileHash != hex.EncodeToString(emptyHash[:]) {

@@ -98,6 +98,10 @@ func TestValidateFileMetadata(t *testing.T) {
 		{"zero chunk size", func(m *FileMetadata) { m.ChunkSize = 0 }},
 		{"wrong chunk count", func(m *FileMetadata) { m.ChunkHashes = m.ChunkHashes[:1] }},
 		{"bad chunk hash", func(m *FileMetadata) { m.ChunkHashes[0] = "bad" }},
+		//Rabindra Neupane
+		{"bad base chunk hash", func(m *FileMetadata) { m.BaseChunkHashes = []string{"bad"} }},
+		//Rabindra Neupane
+		{"bad revision identity", func(m *FileMetadata) { m.BaseRevisions = []string{"bad"} }},
 		{"bad file hash", func(m *FileMetadata) { m.FileHash = "bad" }},
 		{"zero version", func(m *FileMetadata) { m.Version = 0 }},
 		{"invalid base", func(m *FileMetadata) { v := 1; m.BaseVersion = &v }},

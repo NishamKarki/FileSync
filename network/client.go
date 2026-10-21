@@ -67,6 +67,10 @@ func CompleteChunkTransfer(ctx context.Context, address, transferID string) erro
 	if err := transferRequest(ctx, address, "/transfer/complete", "application/json", body, &result); err != nil {
 		return err
 	}
+	//Rabindra Neupane
+	if result.TransferID == transferID && !result.Completed && result.ConflictFile != "" {
+		return &SyncConflictError{ConflictFile: result.ConflictFile}
+	}
 	if result.TransferID != transferID || !result.Completed {
 		return fmt.Errorf("receiver did not confirm completion")
 	}
