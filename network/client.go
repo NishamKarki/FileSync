@@ -71,14 +71,13 @@ func SendFile(address, filePath string) error {
 	}
 
 	// Copy the file contents into the request body
-	_, copyError := io.Copy(filePart, fileToSend)
-	if copyError != nil {
-		return copyError
+	if _, err := io.Copy(filePart, fileToSend); err != nil {
+		return err
 	}
 
 	// Close the multipart writer to finalize the request body
-	if writerCloseError := fileWriter.Close(); writerCloseError != nil {
-		return writerCloseError
+	if err := fileWriter.Close(); err != nil {
+		return err
 	}
 
 	// Create a new HTTP request for sending the file
@@ -110,50 +109,58 @@ func SendFile(address, filePath string) error {
 
 // SendChunk transfers one individual file chunk to another FileSync
 // device on the local network
-func SendChunk(address string, fileName string, chunkIndex int, chunkData []byte) error {
+func SendChunk(address string, fileName string, chunkIndex int, totalChunks int, chunkHash string, chunkData []byte) error {
 	var requestBody bytes.Buffer
 	chunkWriter := multipart.NewWriter(&requestBody)
 
 	// Send the name of the original file being split into chunks
-	sendFileNameErr := chunkWriter.WriteField("fileName", fileName)
-	if sendFileNameErr != nil {
-		return sendFileNameErr
+	if err := chunkWriter.WriteField("fileName", fileName); err != nil {
+		return err
 	}
 
 	// Send the index of the current chunk being sent
-	sendChunkIndexErr := chunkWriter.WriteField("chunkIndex", fmt.Sprintf("%d", chunkIndex))
-	if sendChunkIndexErr != nil {
-		return sendChunkIndexErr
+	if err := chunkWriter.WriteField("chunkIndex", fmt.Sprintf("%d", chunkIndex)); err != nil {
+		return err
+	}
+
+	// Send the total number of chunks being sent
+	if err := chunkWriter.WriteField("totalChunks", fmt.Sprintf("%d", totalChunks)); err != nil {
+		return err
+	}
+
+	// Send the SHA-256 hash of the chunk so the receiving device can verify its integrity
+	if err := chunkWriter.WriteField("chunkHash", chunkHash); err != nil {
+		return err
 	}
 
 	// Add the chunk data to the request body
-	chunkPart, chunkPartErr := chunkWriter.CreateFormFile("Chunk", fmt.Sprintf("Chunk_%d.chunk", chunkIndex))
-	if chunkPartErr != nil {
-		return chunkPartErr
+	chunkPart, chunkPartCreationError := chunkWriter.CreateFormFile("Chunk", fmt.Sprintf("Chunk_%d.chunk", chunkIndex))
+	if chunkPartCreationError != nil {
+		return chunkPartCreationError
 	}
 
-	_, writeChunkDataErr := chunkPart.Write(chunkData)
-	if writeChunkDataErr != nil {
-		return writeChunkDataErr
+	if _, err := chunkPart.Write(chunkData); err != nil {
+		return err
 	}
-	//Close the multipart writer to finalize the request body
-	if chunkWriterCloseErr := chunkWriter.Close(); chunkWriterCloseErr != nil {
-		return chunkWriterCloseErr
+
+	if err := chunkWriter.Close(); err != nil {
+		return err
 	}
 
 	// Send the chunk data to the receiving device
-	request, chunkReceiveErr := http.NewRequest(http.MethodPost, "http://"+address+"/chunk", &requestBody)
-	if chunkReceiveErr != nil {
-		return chunkReceiveErr
+	request, requestCreationError := http.NewRequest(http.MethodPost, "http://"+address+"/chunk", &requestBody)
+	if requestCreationError != nil {
+		return requestCreationError
 	}
 	request.Header.Set("Content-Type", chunkWriter.FormDataContentType())
 
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
-	response, chunkReceiveErr := client.Do(request)
-	if chunkReceiveErr != nil {
-		return chunkReceiveErr
+
+	response, requestSendError := client.Do(request)
+	if requestSendError != nil {
+		return requestSendError
 	}
 	defer response.Body.Close()
 

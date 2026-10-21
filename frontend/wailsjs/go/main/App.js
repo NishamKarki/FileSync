@@ -42,6 +42,10 @@ export function ScheduleFileProcessing(arg1) {
   return window['go']['main']['App']['ScheduleFileProcessing'](arg1);
 }
 
+export function SendAllChunks(arg1, arg2) {
+  return window['go']['main']['App']['SendAllChunks'](arg1, arg2);
+}
+
 export function SendFile(arg1, arg2) {
   return window['go']['main']['App']['SendFile'](arg1, arg2);
 }
