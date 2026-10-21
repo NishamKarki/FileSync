@@ -17,6 +17,7 @@ import (
 // CompareFileMetadata asks a peer which chunks it needs. The address uses the
 // same host:port format as SendChunk. This does not send file content or confirm
 // a completed synchronization. The context lets callers cancel the request.
+//Rabindra Neupane
 func CompareFileMetadata(ctx context.Context, address string, metadata FileMetadata) (*FileMetadataComparison, error) {
 	client := &http.Client{
 		Transport: &http.Transport{Proxy: nil},
@@ -28,6 +29,7 @@ func CompareFileMetadata(ctx context.Context, address string, metadata FileMetad
 	return requestFileMetadata(ctx, client, address, metadata)
 }
 
+//Rabindra Neupane
 func requestFileMetadata(ctx context.Context, client *http.Client, address string, metadata FileMetadata) (*FileMetadataComparison, error) {
 	if err := validateFileMetadata(metadata); err != nil {
 		return nil, fmt.Errorf("invalid file metadata: %w", err)
@@ -123,6 +125,7 @@ func PingDevice(address string) (*PingResponse, error) {
 // SendFile sends a complete file from a current FileSync devicec to another
 // FileSync device on the local network
 // It returns nil when the receiving decice confirms successful transfer with HTTP response
+//Rabindra Neupane
 func SendFile(address, filePath string) error {
 	// Open the file to be sent
 	fileToSend, fileOpenError := os.Open(filePath)
@@ -180,6 +183,7 @@ func SendFile(address, filePath string) error {
 
 // SendChunk transfers one individual file chunk to another FileSync
 // device on the local network
+//Rabindra Neupane
 func SendChunk(address string, fileName string, chunkIndex int, totalChunks int, chunkHash string, chunkData []byte) error {
 	var requestBody bytes.Buffer
 	chunkWriter := multipart.NewWriter(&requestBody)

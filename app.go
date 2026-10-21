@@ -97,7 +97,10 @@ func (a *App) startup(ctx context.Context) {
 	a.FileWatcher(a.syncFolderPath)
 
 	// Start the local HTTP Server
-	go network.StartServer("8080")
+	//Rabindra Neupane
+	// Reconstruction implementation: Nisham Karki
+	// Network integration: Rabindra Neupane
+	go network.StartServer("8080", a.ReconstructFile)
 }
 
 // /Rabindra Neupane
@@ -164,6 +167,8 @@ func (a *App) SendFirstChunk(address string, fileName string) error {
 	return network.SendChunk(address, fileName, firstChunk.Index, len(chunks), firstChunk.Hash, firstChunk.Data)
 }
 
+// Rabindra Neupane
+// SendAllChunks sends all chunks of a file to another FileSync device on the network
 func (a *App) SendAllChunks(address string, fileName string) error {
 	filePath := filepath.Join(a.syncFolderPath, fileName)
 

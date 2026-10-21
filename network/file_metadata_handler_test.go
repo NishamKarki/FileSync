@@ -13,11 +13,13 @@ import (
 	"testing"
 )
 
+//Rabindra Neupane
 func metadataHash(data string) string {
 	hash := sha256.Sum256([]byte(data))
 	return hex.EncodeToString(hash[:])
 }
 
+//Rabindra Neupane
 func testFileMetadata() FileMetadata {
 	return FileMetadata{
 		FileID: "sample.txt", FileName: "sample.txt", Version: 1,
@@ -27,6 +29,7 @@ func testFileMetadata() FileMetadata {
 	}
 }
 
+//Rabindra Neupane
 func TestCompareFileMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -82,6 +85,7 @@ func TestCompareFileMetadata(t *testing.T) {
 	}
 }
 
+//Rabindra Neupane
 func TestValidateFileMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -114,6 +118,7 @@ func TestValidateFileMetadata(t *testing.T) {
 	}
 }
 
+//Rabindra Neupane
 func TestFileMetadataRequestValidation(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, body string

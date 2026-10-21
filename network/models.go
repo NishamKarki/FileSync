@@ -4,6 +4,7 @@ package network
 // FileMetadata describes one proposed file version. Version numbers use the
 // existing file_versions convention; BaseVersion is nil for an initial version.
 // ChunkHashes are ordered by the same zero-based indexes used by ChunkFile.
+//Rabindra Neupane
 type FileMetadata struct {
 	FileID      string   `json:"fileId"`
 	FileName    string   `json:"fileName"`
@@ -17,6 +18,7 @@ type FileMetadata struct {
 
 // FileMetadataComparison identifies chunks whose stored bytes cannot be reused.
 // An empty list does not confirm reconstruction or version/conflict acceptance.
+//Rabindra Neupane
 type FileMetadataComparison struct {
 	NeededChunks []int `json:"neededChunks"`
 }

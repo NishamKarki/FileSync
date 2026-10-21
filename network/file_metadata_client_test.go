@@ -12,6 +12,7 @@ import (
 	"time"
 )
 
+//Rabindra Neupane
 func TestCompareFileMetadataRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,6 +31,7 @@ func TestCompareFileMetadataRoundTrip(t *testing.T) {
 	}
 }
 
+//Rabindra Neupane
 func TestCompareFileMetadataResponses(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
@@ -77,6 +79,7 @@ func TestCompareFileMetadataResponses(t *testing.T) {
 	}
 }
 
+//Rabindra Neupane
 func TestCompareFileMetadataRejectsInvalidInput(t *testing.T) {
 	metadata := testFileMetadata()
 	metadata.ChunkSize = 0
@@ -85,6 +88,7 @@ func TestCompareFileMetadataRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+//Rabindra Neupane
 func TestCompareFileMetadataTimeout(t *testing.T) {
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-release }))
@@ -98,6 +102,7 @@ func TestCompareFileMetadataTimeout(t *testing.T) {
 	}
 }
 
+//Rabindra Neupane
 func TestCompareFileMetadataCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -107,6 +112,7 @@ func TestCompareFileMetadataCancellation(t *testing.T) {
 	}
 }
 
+//Rabindra Neupane
 func TestCompareFileMetadataConnectionFailure(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	address := strings.TrimPrefix(server.URL, "http://")

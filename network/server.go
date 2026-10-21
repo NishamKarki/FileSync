@@ -92,15 +92,21 @@ func fileHandler(responseWriter http.ResponseWriter, request *http.Request) {
 	responseWriter.WriteHeader(http.StatusOK)
 }
 
-// StartServer starts the HTTP server on the specified port
-func StartServer(port string) {
+// StartServer uses the application's reconstruction method after chunk receipt.
+// The callback keeps reconstruction owned by the app without an import cycle.
+//Rabindra Neupane
+// Reconstruction implementation: Nisham Karki
+// Network integration: Rabindra Neupane
+func StartServer(port string, reconstructFile func(string) error) {
 	// Create a new HTTP ServeMux to handle incoming ping requests
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ping", pingHandler)
 	// Create a new HTTP ServeMux to handle incoming file transfer requests
 	mux.HandleFunc("/file", fileHandler)
 	// Create a new HTTP ServeMux to handle incoming chunk transfer requests
-	mux.HandleFunc("/chunk", chunkHandler)
+	mux.HandleFunc("/chunk", func(w http.ResponseWriter, r *http.Request) {
+		chunkHandler(w, r, reconstructFile)
+	})
 	// Compare metadata without writing chunks or replacing the destination file.
 	mux.HandleFunc("/file-metadata", fileMetadataHandler)
 
@@ -116,6 +122,7 @@ func StartServer(port string) {
 }
 
 // fileMetadataHandler accepts the proposed file metadata and reports reusable local chunks.
+//Rabindra Neupane
 func fileMetadataHandler(w http.ResponseWriter, r *http.Request) {
 	projectDirectory, err := os.Getwd()
 	if err != nil {
@@ -126,6 +133,7 @@ func fileMetadataHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // compareFileMetadata takes an explicit storage root so tests never touch user files.
+//Rabindra Neupane
 func compareFileMetadata(w http.ResponseWriter, r *http.Request, projectDirectory string) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
@@ -185,6 +193,7 @@ func compareFileMetadata(w http.ResponseWriter, r *http.Request, projectDirector
 	json.NewEncoder(w).Encode(result)
 }
 
+//Rabindra Neupane
 func validateFileMetadata(m FileMetadata) error {
 	// Current chunk storage is flat: IDs must match the relative file name.
 	// Reject path components on either Windows or Unix, regardless of host OS.
@@ -226,7 +235,8 @@ func validateFileMetadata(m FileMetadata) error {
 	return nil
 }
 
-func chunkHandler(responseWriter http.ResponseWriter, request *http.Request) {
+//Rabindra Neupane
+func chunkHandler(responseWriter http.ResponseWriter, request *http.Request, reconstructFile func(string) error) {
 	fmt.Println("Chunk transfer request received")
 	// Check if the request method is POST, otherwise return a "Method not allowed" error
 	if request.Method != http.MethodPost {
@@ -340,7 +350,14 @@ func chunkHandler(responseWriter http.ResponseWriter, request *http.Request) {
 
 	if allChunksReceived {
 		fmt.Printf("All %d chunks of %s have been received\n", totalChunks, fileName)
-		reconstructionError := ReconstructFile(projectDirectoryPath, fileName, totalChunks)
+		if reconstructFile == nil {
+			http.Error(responseWriter, "File reconstruction is unavailable", http.StatusInternalServerError)
+			return
+		}
+		//Rabindra Neupane
+		// Reconstruction implementation: Nisham Karki
+		// Network integration: Rabindra Neupane
+		reconstructionError := reconstructFile(filepath.Base(fileName))
 		if reconstructionError != nil {
 			fmt.Printf("File reconstructruction failed: %v\n", reconstructionError)
 			http.Error(responseWriter, "File reconstructruction failed", http.StatusInternalServerError)
