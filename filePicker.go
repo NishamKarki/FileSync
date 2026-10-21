@@ -31,6 +31,15 @@ func (app *App) AddFile() string {
 		return ""
 	}
 
+	//Rabindra Neupane
+	return app.addSelectedFile(selectFilePath)
+}
+
+//Rabindra Neupane
+// File picker/copy implementation: Nisham Karki.
+// Existing-file selection and testable path handling: Rabindra Neupane.
+func (app *App) addSelectedFile(selectFilePath string) string {
+
 	// Get selected file name
 	fileName := filepath.Base(selectFilePath)
 
@@ -47,15 +56,16 @@ func (app *App) AddFile() string {
 			app.syncFolderPath,
 		)
 
-	// Return message if a files already exists in the folder
+	//Rabindra Neupane
+	// Select the existing synced copy without copying or overwriting it.
 	if ifFileAlreadyExists {
 
 		fmt.Println(
-			filepath.Base(selectFilePath),
-			"already exists in Synced Files",
+			filepath.Base(destinationFilePath),
+			"selected from Synced Files",
 		)
 
-		return ""
+		return filepath.Base(destinationFilePath)
 	}
 
 	// Open original file
