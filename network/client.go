@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -97,7 +98,25 @@ func transferRequest(ctx context.Context, address, path, contentType string, bod
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("transfer request failed: %s", response.Status)
+		//Rabindra Neupane
+		// Keep the receiver's explanation without accepting an unbounded body.
+		const errorLimit = 4096
+		detail, readErr := io.ReadAll(io.LimitReader(response.Body, errorLimit+1))
+		if readErr != nil {
+			return fmt.Errorf("transfer request failed: %s (cannot read receiver error: %v)", response.Status, readErr)
+		}
+		truncated := len(detail) > errorLimit
+		if truncated {
+			detail = detail[:errorLimit]
+		}
+		message := strings.TrimSpace(string(detail))
+		if truncated {
+			message += " [truncated]"
+		}
+		if message == "" {
+			return fmt.Errorf("transfer request failed: %s", response.Status)
+		}
+		return fmt.Errorf("transfer request failed: %s: %s", response.Status, message)
 	}
 	if result == nil {
 		return nil

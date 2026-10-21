@@ -177,9 +177,40 @@ func TestTransferCompletionFailures(t *testing.T) {
 				if err == nil || transfer.completed {
 					t.Fatal("failed transfer marked complete")
 				}
+				//Rabindra Neupane
+				if tc == "reconstruction error" && (!strings.Contains(err.Error(), "Apply verified file: verification failed") || !strings.Contains(err.Error(), "500 Internal Server Error")) {
+					t.Fatalf("receiver explanation was lost: %v", err)
+				}
+				if tc == "corrupt staged chunk" && !strings.Contains(err.Error(), "Verify chunk 0: chunk size or hash mismatch") {
+					t.Fatalf("chunk verification explanation was lost: %v", err)
+				}
 				if tc != "reconstruction error" && calls != 0 {
 					t.Fatal("invalid transfer reconstructed")
 				}
+			}
+		})
+	}
+}
+
+//Rabindra Neupane
+func TestTransferRequestErrorDetails(t *testing.T) {
+	for _, tc := range []struct{ name, body, expected string }{
+		{"receiver explanation", "destination has a local edit awaiting processing\n", "destination has a local edit awaiting processing"},
+		{"empty response", "", "transfer request failed: 500 Internal Server Error"},
+		{"oversized error", strings.Repeat("X", 10000), "[truncated]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			err := CompleteChunkTransfer(context.Background(), strings.TrimPrefix(server.URL, "http://"), "test-id")
+			if err == nil || !strings.Contains(err.Error(), tc.expected) {
+				t.Fatalf("missing receiver detail: %v", err)
+			}
+			if len(err.Error()) > 4300 {
+				t.Fatalf("receiver error was not bounded: %d", len(err.Error()))
 			}
 		})
 	}

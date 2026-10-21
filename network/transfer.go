@@ -260,7 +260,8 @@ func (receiver *transferReceiver) complete(w http.ResponseWriter, r *http.Reques
 	for index := range transfer.metadata.ChunkHashes {
 		path := filepath.Join(transfer.root, transfer.metadata.FileName, fmt.Sprintf("chunk_%d.chunk", index))
 		if _, err := readVerifiedChunk(path, transfer.metadata, index); err != nil {
-			http.Error(w, "Transfer has missing or invalid chunks", 409)
+			//Rabindra Neupane
+			reportTransferFailure(w, request.TransferID, transfer.metadata.FileName, fmt.Sprintf("Verify chunk %d", index), err, 409)
 			return
 		}
 	}
@@ -271,28 +272,39 @@ func (receiver *transferReceiver) complete(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := receiver.reconstruct(transfer.metadata, transfer.root); err != nil {
-		http.Error(w, "Reconstruction or final verification failed", 500)
+		//Rabindra Neupane
+		reportTransferFailure(w, request.TransferID, transfer.metadata.FileName, "Apply verified file", err, 500)
 		return
 	}
 	// Cache verified chunks for the next comparison. Stale trailing chunks are
 	// ignored by metadata comparison; reconstruction uses the isolated folder.
 	folder := filepath.Join(receiver.projectRoot, "File Chunks", transfer.metadata.FileName)
 	if err := os.MkdirAll(folder, 0755); err != nil {
-		http.Error(w, "Cannot update chunk cache", 500)
+		//Rabindra Neupane
+		reportTransferFailure(w, request.TransferID, transfer.metadata.FileName, "Create chunk cache folder", err, 500)
 		return
 	}
 	for index := range transfer.metadata.ChunkHashes {
 		name := fmt.Sprintf("chunk_%d.chunk", index)
 		data, err := readVerifiedChunk(filepath.Join(transfer.root, transfer.metadata.FileName, name), transfer.metadata, index)
 		if err != nil {
-			http.Error(w, "Cannot read verified chunk", 500)
+			//Rabindra Neupane
+			reportTransferFailure(w, request.TransferID, transfer.metadata.FileName, fmt.Sprintf("Read verified chunk %d for cache", index), err, 500)
 			return
 		}
 		if err := os.WriteFile(filepath.Join(folder, name), data, 0644); err != nil {
-			http.Error(w, "Cannot update chunk cache", 500)
+			//Rabindra Neupane
+			reportTransferFailure(w, request.TransferID, transfer.metadata.FileName, fmt.Sprintf("Cache verified chunk %d", index), err, 500)
 			return
 		}
 	}
 	transfer.completed = true
 	writeTransferJSON(w, TransferCompletion{request.TransferID, true})
+}
+
+//Rabindra Neupane
+// Log the exact failing stage on B and return its explanation to A.
+func reportTransferFailure(w http.ResponseWriter, transferID, fileName, stage string, err error, status int) {
+	fmt.Printf("Transfer completion failed: id=%q file=%q stage=%q error=%q\n", transferID, fileName, stage, err.Error())
+	http.Error(w, fmt.Sprintf("%s: %v", stage, err), status)
 }
