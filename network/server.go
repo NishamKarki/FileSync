@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // PingResponse represents the response from a ping request
@@ -100,6 +101,8 @@ func StartServer(port string) {
 	mux.HandleFunc("/file", fileHandler)
 	// Create a new HTTP ServeMux to handle incoming chunk transfer requests
 	mux.HandleFunc("/chunk", chunkHandler)
+	// Compare metadata without writing chunks or replacing the destination file.
+	mux.HandleFunc("/file-metadata", fileMetadataHandler)
 
 	// Print server starting message to the console
 	fmt.Println("FileSync Network Server Starting...", port)
@@ -110,6 +113,117 @@ func StartServer(port string) {
 	if err != nil {
 		fmt.Println("Network server error:", err)
 	}
+}
+
+// fileMetadataHandler accepts the proposed file metadata and reports reusable local chunks.
+func fileMetadataHandler(w http.ResponseWriter, r *http.Request) {
+	projectDirectory, err := os.Getwd()
+	if err != nil {
+		http.Error(w, "Failed to locate chunk storage", http.StatusInternalServerError)
+		return
+	}
+	compareFileMetadata(w, r, projectDirectory)
+}
+
+// compareFileMetadata takes an explicit storage root so tests never touch user files.
+func compareFileMetadata(w http.ResponseWriter, r *http.Request, projectDirectory string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "Only POST requests are allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Bound metadata independently of the size of the file being synchronized.
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var metadata FileMetadata
+	if err := decoder.Decode(&metadata); err != nil {
+		http.Error(w, "Invalid file metadata", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		http.Error(w, "Expected one file metadata", http.StatusBadRequest)
+		return
+	}
+	if err := validateFileMetadata(metadata); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	result := FileMetadataComparison{NeededChunks: make([]int, 0)}
+	for index, expectedHash := range metadata.ChunkHashes {
+		chunkPath := filepath.Join(projectDirectory, "File Chunks", metadata.FileName, fmt.Sprintf("chunk_%d.chunk", index))
+		chunk, err := os.Open(chunkPath)
+		if os.IsNotExist(err) {
+			result.NeededChunks = append(result.NeededChunks, index)
+			continue
+		}
+		if err != nil {
+			http.Error(w, "Failed to read stored chunk", http.StatusInternalServerError)
+			return
+		}
+		expectedSize := metadata.ChunkSize
+		if index == len(metadata.ChunkHashes)-1 {
+			expectedSize = metadata.FileSize - int64(index)*metadata.ChunkSize
+		}
+		hasher := sha256.New()
+		// Read at most the expected size plus one to detect oversized chunks.
+		// LimitReader avoids allocating a buffer proportional to an untrusted size.
+		reader := io.LimitReader(chunk, expectedSize)
+		size, readErr := io.Copy(hasher, reader)
+		var extra [1]byte
+		extraSize, extraErr := chunk.Read(extra[:])
+		closeErr := chunk.Close()
+		if readErr != nil || (extraErr != nil && extraErr != io.EOF) || closeErr != nil {
+			http.Error(w, "Failed to read stored chunk", http.StatusInternalServerError)
+			return
+		}
+		if size != expectedSize || extraSize != 0 || hex.EncodeToString(hasher.Sum(nil)) != expectedHash {
+			result.NeededChunks = append(result.NeededChunks, index)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func validateFileMetadata(m FileMetadata) error {
+	// Current chunk storage is flat: IDs must match the relative file name.
+	// Reject path components on either Windows or Unix, regardless of host OS.
+	if m.FileName == "" || m.FileName == "." || m.FileName == ".." ||
+		strings.ContainsAny(m.FileName, "/\\:\x00") || m.FileID != m.FileName {
+		return fmt.Errorf("Invalid file identity: expected a plain file name and matching file ID")
+	}
+	if m.Version < 1 || (m.BaseVersion != nil && (*m.BaseVersion < 1 || *m.BaseVersion >= m.Version)) {
+		return fmt.Errorf("Invalid version metadata")
+	}
+	if m.FileSize < 0 || m.ChunkSize <= 0 {
+		return fmt.Errorf("Invalid file or chunk size")
+	}
+	count := m.FileSize / m.ChunkSize
+	if m.FileSize%m.ChunkSize != 0 {
+		count++
+	}
+	if int64(len(m.ChunkHashes)) != count {
+		return fmt.Errorf("Chunk count does not match file size")
+	}
+	validHash := func(value string) bool {
+		decoded, err := hex.DecodeString(value)
+		return err == nil && len(decoded) == sha256.Size && value == strings.ToLower(value)
+	}
+	if !validHash(m.FileHash) {
+		return fmt.Errorf("Invalid file SHA-256 hash")
+	}
+	for _, hash := range m.ChunkHashes {
+		if !validHash(hash) {
+			return fmt.Errorf("Invalid chunk SHA-256 hash")
+		}
+	}
+	if m.FileSize == 0 {
+		emptyHash := sha256.Sum256(nil)
+		if m.FileHash != hex.EncodeToString(emptyHash[:]) {
+			return fmt.Errorf("Invalid empty file hash")
+		}
+	}
+	return nil
 }
 
 func chunkHandler(responseWriter http.ResponseWriter, request *http.Request) {

@@ -3,6 +3,7 @@ package network
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,76 @@ import (
 	"path/filepath"
 	"time"
 )
+
+// CompareFileMetadata asks a peer which chunks it needs. The address uses the
+// same host:port format as SendChunk. This does not send file content or confirm
+// a completed synchronization. The context lets callers cancel the request.
+func CompareFileMetadata(ctx context.Context, address string, metadata FileMetadata) (*FileMetadataComparison, error) {
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: nil},
+		Timeout:   30 * time.Second,
+		// Metadata must be compared by the selected peer, without redirects.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	defer client.CloseIdleConnections()
+	return requestFileMetadata(ctx, client, address, metadata)
+}
+
+func requestFileMetadata(ctx context.Context, client *http.Client, address string, metadata FileMetadata) (*FileMetadataComparison, error) {
+	if err := validateFileMetadata(metadata); err != nil {
+		return nil, fmt.Errorf("invalid file metadata: %w", err)
+	}
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("encode file metadata: %w", err)
+	}
+	if len(body) > 8<<20 {
+		return nil, fmt.Errorf("file metadata exceeds the receiver's 8 MiB limit")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+address+"/file-metadata", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create file metadata request: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("compare file metadata: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("file metadata comparison failed: %s", response.Status)
+	}
+	// Bound the response before decoding, including any trailing data.
+	const responseLimit = 8 << 20
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read file metadata response: %w", err)
+	}
+	if len(responseBody) > responseLimit {
+		return nil, fmt.Errorf("file metadata response exceeds 8 MiB")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(responseBody))
+	decoder.DisallowUnknownFields()
+	var result FileMetadataComparison
+	if err := decoder.Decode(&result); err != nil {
+		return nil, fmt.Errorf("invalid file metadata response: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("expected one file metadata response")
+	}
+	// Missing/null lists must not be mistaken for 'no chunks needed'.
+	if result.NeededChunks == nil {
+		return nil, fmt.Errorf("file metadata response is missing neededChunks")
+	}
+	seen := make(map[int]bool, len(result.NeededChunks))
+	for _, index := range result.NeededChunks {
+		if index < 0 || index >= len(metadata.ChunkHashes) || seen[index] {
+			return nil, fmt.Errorf("file metadata response contains an invalid or duplicate chunk index: %d", index)
+		}
+		seen[index] = true
+	}
+	return &result, nil
+}
 
 // PingDevice sends a ping request to the specified address and returns the response
 // It checks whether another FileSync device is reachable on the local network
