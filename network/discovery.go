@@ -36,7 +36,8 @@ func DiscoverDevices() []Device {
 		return []Device{}
 	}
 
-	MarkAllDevicesOffline()
+	//Rabindra Neupane
+	// Scanning only discovers peers; coordinator heartbeats own registry status.
 
 	//channel to collect the results from the ping goroutines
 	results := make(chan Device, 254)
@@ -61,13 +62,14 @@ func DiscoverDevices() []Device {
 			// Check if the ping was successful and the device is online
 			if pingErr == nil && response.Success {
 				device := Device{
+					//Rabindra Neupane
+					DeviceID:     response.DeviceID,
+					Coordinator:  response.Coordinator,
 					DeviceName:   response.DeviceName,
 					DeviceIP:     deviceIP,
 					DevicePort:   8080,
 					DeviceOnline: true,
 				}
-
-				RegisterDevice(response.DeviceName, device.DeviceIP, "8080")
 
 				fmt.Println("FileSync device found:", device.DeviceName, device.DeviceIP)
 				results <- device
@@ -86,18 +88,6 @@ func DiscoverDevices() []Device {
 			devices = append(devices, device)
 		}
 	}
-
-	// Print the device registry to the console
-	fmt.Println("-----FileSync Device Registry-----")
-	for _, registeredDevice := range GetRegisteredDevices() {
-		fmt.Printf("Device: %s | IP: %s | Port: %s | Online: %t | Last Seen: %s\n",
-			registeredDevice.Name,
-			registeredDevice.IP,
-			registeredDevice.Port,
-			registeredDevice.Online,
-			registeredDevice.LastSeen.Format("2006-01-02 15:04:05"))
-	}
-	fmt.Println("-----------------------------------")
 
 	return devices
 }

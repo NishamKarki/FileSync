@@ -8,11 +8,17 @@ export function AddFile():Promise<string>;
 
 export function ChunkFile(arg1:string):Promise<Array<main.Chunk>>;
 
+export function ConfigureCoordinator(arg1:boolean,arg2:string):Promise<void>;
+
 export function DiscoverDevices():Promise<Array<network.Device>>;
 
 export function FileWatcher(arg1:string):Promise<void>;
 
 export function GetLocalIP():Promise<string>;
+
+export function GetRegisteredDevices():Promise<Array<network.Device>>;
+
+export function GetRegistrationStatus():Promise<network.RegistrationStatus>;
 
 export function HandleFileEvent(arg1:fsnotify.Event):Promise<void>;
 

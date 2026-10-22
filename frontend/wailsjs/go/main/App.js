@@ -10,6 +10,10 @@ export function ChunkFile(arg1) {
   return window['go']['main']['App']['ChunkFile'](arg1);
 }
 
+export function ConfigureCoordinator(arg1, arg2) {
+  return window['go']['main']['App']['ConfigureCoordinator'](arg1, arg2);
+}
+
 export function DiscoverDevices() {
   return window['go']['main']['App']['DiscoverDevices']();
 }
@@ -20,6 +24,14 @@ export function FileWatcher(arg1) {
 
 export function GetLocalIP() {
   return window['go']['main']['App']['GetLocalIP']();
+}
+
+export function GetRegisteredDevices() {
+  return window['go']['main']['App']['GetRegisteredDevices']();
+}
+
+export function GetRegistrationStatus() {
+  return window['go']['main']['App']['GetRegistrationStatus']();
 }
 
 export function HandleFileEvent(arg1) {

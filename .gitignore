@@ -7,3 +7,6 @@
 *.db
 # Rabindra Neupane - preserved incoming conflict copies are runtime data.
 /Conflicting Files/
+# Rabindra Neupane - installation identity and coordinator settings stay local.
+/.filesync-device.json
+/.filesync-device-*.tmp

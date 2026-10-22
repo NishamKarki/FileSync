@@ -32,6 +32,9 @@ type App struct {
 	//Rabindra Neupane
 	fileProcessingMutex sync.Mutex        // Serialize watcher processing with remote apply.
 	remoteFileHashes    map[string]string // Verified remote contents, guarded by fileProcessingMutex.
+	//Rabindra Neupane
+	deviceRegistry *network.DeviceRegistry
+	networkCancel  context.CancelFunc
 }
 
 //Rabindra Neupane
@@ -233,6 +236,13 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.db = db
+	//Rabindra Neupane
+	serviceCtx, cancel := context.WithCancel(ctx)
+	a.networkCancel = cancel
+	a.deviceRegistry, dbError = network.OpenDeviceRegistry(serviceCtx, db, getProjectDirectory, 8080)
+	if dbError != nil {
+		fmt.Println("Device registration setup failed:", dbError)
+	}
 
 	// Initialize FileWatcher function and start monitoring "Synced Files" folder at startup
 	a.FileWatcher(a.syncFolderPath)
@@ -241,7 +251,49 @@ func (a *App) startup(ctx context.Context) {
 	//Rabindra Neupane
 	// Reconstruction implementation: Nisham Karki
 	// Network integration: Rabindra Neupane
-	go network.StartServer("8080", a.ReconstructFile, a.completeIncomingTransfer)
+	go network.StartServer(serviceCtx, "8080", a.ReconstructFile, a.completeIncomingTransfer, a.deviceRegistry)
+}
+
+//Rabindra Neupane
+func (a *App) ConfigureCoordinator(coordinator bool, address string) error {
+	if a.deviceRegistry == nil {
+		return fmt.Errorf("device registration is unavailable; check startup logs")
+	}
+	return a.deviceRegistry.Configure(coordinator, address)
+}
+
+//Rabindra Neupane
+func (a *App) GetRegistrationStatus() (network.RegistrationStatus, error) {
+	if a.deviceRegistry == nil {
+		return network.RegistrationStatus{}, fmt.Errorf("device registration is unavailable; check startup logs")
+	}
+	return a.deviceRegistry.Status(), nil
+}
+
+//Rabindra Neupane
+func (a *App) GetRegisteredDevices() ([]network.Device, error) {
+	if a.deviceRegistry == nil {
+		return nil, fmt.Errorf("device registration is unavailable")
+	}
+	return a.deviceRegistry.Devices()
+}
+
+//Rabindra Neupane
+func (a *App) shutdown(ctx context.Context) {
+	if a.networkCancel != nil {
+		a.networkCancel()
+	}
+	if a.deviceRegistry != nil {
+		a.deviceRegistry.Close()
+	}
+	if a.fileWatcher != nil {
+		a.fileWatcher.Close()
+	}
+	a.timerMutex.Lock()
+	for _, timer := range a.fileTimers {
+		timer.Stop()
+	}
+	a.timerMutex.Unlock()
 }
 
 //Rabindra Neupane

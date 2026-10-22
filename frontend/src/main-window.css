@@ -173,6 +173,22 @@ button:hover {
     border-radius: 6px;
 }
 
+/* Rabindra Neupane - coordinator setup and live registered-device states. */
+.coordinator-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+.coordinator-controls input:not([type="checkbox"]) {
+    padding: 8px;
+    min-width: 0;
+}
+#registration-status { overflow-wrap: anywhere; font-size: 0.85rem; }
+/* Rabindra Neupane - show registered device names and IDs on separate lines. */
+button.device { width: 100%; text-align: left; white-space: pre-line; overflow-wrap: anywhere; }
+button.device:disabled { opacity: 0.55; cursor: default; }
+
 /* Recent Activity
    Displays file-change messages produced by FileSync */
 .activity p span {

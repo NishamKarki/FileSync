@@ -2,9 +2,11 @@
 package network
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // PingResponse represents the response from a ping request
@@ -19,10 +22,14 @@ type PingResponse struct {
 	Success    bool   `json:"success"`
 	Message    string `json:"message"`
 	DeviceName string `json:"deviceName"`
+	//Rabindra Neupane
+	DeviceID    string `json:"deviceId"`
+	Coordinator bool   `json:"coordinator"`
 }
 
 // pingHandler handles the /ping endpoint and responds with a PingResponse
-func pingHandler(responseWriter http.ResponseWriter, request *http.Request) {
+//Rabindra Neupane
+func pingHandler(responseWriter http.ResponseWriter, request *http.Request, registry *DeviceRegistry) {
 	responseWriter.Header().Set("Content-Type", "application/json")
 
 	// Get the hostname of the device running the server
@@ -35,6 +42,11 @@ func pingHandler(responseWriter http.ResponseWriter, request *http.Request) {
 		Success:    true,
 		Message:    "FileSync Client is Online",
 		DeviceName: deviceName,
+	}
+	//Rabindra Neupane
+	if registry != nil {
+		status := registry.Status()
+		response.DeviceID, response.Coordinator = status.DeviceID, status.Coordinator
 	}
 	json.NewEncoder(responseWriter).Encode(response)
 }
@@ -97,10 +109,18 @@ func fileHandler(responseWriter http.ResponseWriter, request *http.Request) {
 //Rabindra Neupane
 // Reconstruction implementation: Nisham Karki
 // Network integration: Rabindra Neupane
-func StartServer(port string, reconstructFile func(string) error, completeTransfer func(FileMetadata, string) error) {
+func StartServer(ctx context.Context, port string, reconstructFile func(string) error, completeTransfer func(FileMetadata, string) error, registry *DeviceRegistry) {
 	// Create a new HTTP ServeMux to handle incoming ping requests
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", pingHandler)
+	//Rabindra Neupane
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) { pingHandler(w, r, registry) })
+	if registry != nil {
+		//Rabindra Neupane
+		mux.HandleFunc("/chunks/report", registry.reportChunks)
+		mux.HandleFunc("/chunks/locations", registry.locateChunk)
+		mux.Handle("/devices", registry.Handler())
+		mux.Handle("/devices/", registry.Handler())
+	}
 	// Create a new HTTP ServeMux to handle incoming file transfer requests
 	mux.HandleFunc("/file", fileHandler)
 	// Create a new HTTP ServeMux to handle incoming chunk transfer requests
@@ -121,9 +141,23 @@ func StartServer(port string, reconstructFile func(string) error, completeTransf
 	fmt.Println("FileSync Network Server Starting...", port)
 	fmt.Println("Listening on port:", port)
 
-	err := http.ListenAndServe(":"+port, mux)
+	//Rabindra Neupane
+	server := &http.Server{Addr: ":" + port, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	serverDone := make(chan struct{})
+	defer close(serverDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-serverDone:
+			return
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.Shutdown(shutdownCtx)
+	}()
+	err := server.ListenAndServe()
 	// Check for error during server startup
-	if err != nil {
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Println("Network server error:", err)
 	}
 }

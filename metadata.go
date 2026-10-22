@@ -106,6 +106,19 @@ func createTables(database *sql.DB) error {
 	if chunksTableCreationError != nil {
 		return chunksTableCreationError
 	}
+	//Rabindra Neupane
+	// Device registration extends Santosh's metadata database without changing
+	// the existing files, file_versions, or chunks tables.
+	if err := executeTableCreation(database, `CREATE TABLE IF NOT EXISTS device_registry (
+		registration_key TEXT NOT NULL UNIQUE,
+		device_id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		ip TEXT NOT NULL,
+		port INTEGER NOT NULL,
+		last_seen INTEGER NOT NULL
+	)`); err != nil {
+		return err
+	}
 
 	return nil
 }

@@ -1,6 +1,8 @@
 // /Rabindra Neupane
 package network
 
+import "context"
+
 // FileMetadata describes one proposed file version. Version numbers use the
 // existing file_versions convention; BaseVersion is nil for an initial version.
 // ChunkHashes are ordered by the same zero-based indexes used by ChunkFile.
@@ -55,10 +57,37 @@ func (e *SyncConflictError) Error() string {
 	return "sync conflict: incoming copy preserved at " + e.ConflictFile
 }
 
+//Rabindra Neupane
 type Device struct {
 	DeviceID     string `json:"id"`
 	DeviceName   string `json:"name"`
 	DeviceIP     string `json:"ip"`
 	DevicePort   int    `json:"port"`
 	DeviceOnline bool   `json:"online"`
+	//Rabindra Neupane
+	LastSeen    string `json:"lastSeen"`
+	Coordinator bool   `json:"coordinator"`
+}
+
+//Rabindra Neupane
+// ChunkLocationStore is implemented by Santosh's metadata layer.
+// ReplaceDeviceChunks atomically replaces the entire inventory, including an
+// empty inventory. DeviceIDsForChunk returns unique device IDs for that hash.
+type ChunkLocationStore interface {
+	ReplaceDeviceChunks(context.Context, string, []string) error
+	DeviceIDsForChunk(context.Context, string) ([]string, error)
+}
+
+//Rabindra Neupane
+// RegistrationKey proves which registered installation is reporting inventory.
+type ChunkReport struct {
+	DeviceID        string   `json:"deviceId"`
+	RegistrationKey string   `json:"registrationKey"`
+	ChunkHashes     []string `json:"chunkHashes"`
+}
+
+//Rabindra Neupane
+type ChunkLocations struct {
+	ChunkHash string   `json:"chunkHash"`
+	Devices   []Device `json:"devices"`
 }
