@@ -7,32 +7,38 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-func (app *App) AddFile() string {
+//Rabindra Neupane
+// Multi-file selection extends Nisham Karki's picker and copy workflow.
+type FileImportResult struct {
+	Names  []string `json:"names"`
+	Errors []string `json:"errors"`
+}
 
-	// Open file picker widow
-	selectFilePath, filePickingError := runtime.OpenFileDialog(
-		app.ctx,
-		runtime.OpenDialogOptions{
-			Title: "Select a file to add to FileSync",
-		},
-	)
-
-	// if there is error while picking file for sync
-	if filePickingError != nil {
-		return ""
+//Rabindra Neupane
+func (app *App) AddFiles() (*FileImportResult, error) {
+	paths, err := runtime.OpenMultipleFilesDialog(app.ctx, runtime.OpenDialogOptions{
+		Title: "Select files to add to FileSync",
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	// If user cancels, return nothing
-	if selectFilePath == "" {
-		return ""
+	result := &FileImportResult{Names: make([]string, 0), Errors: make([]string, 0)}
+	seen := make(map[string]bool)
+	for _, path := range paths {
+		name := app.addSelectedFile(path)
+		if name == "" {
+			result.Errors = append(result.Errors, "Could not import "+filepath.Base(path))
+		} else if !seen[name] {
+			result.Names = append(result.Names, name)
+			seen[name] = true
+		}
 	}
-
-	//Rabindra Neupane
-	return app.addSelectedFile(selectFilePath)
+	return result, nil
 }
 
 //Rabindra Neupane
@@ -90,7 +96,14 @@ func (app *App) addSelectedFile(selectFilePath string) string {
 	defer destinationFile.Close()
 
 	// Copy contents from original into FileSync
-	io.Copy(destinationFile, sourceFile)
+	//Rabindra Neupane
+	// Do not select a partial copy if importing one of the files fails.
+	_, copyError := io.Copy(destinationFile, sourceFile)
+	closeError := destinationFile.Close()
+	if copyError != nil || closeError != nil {
+		os.Remove(destinationFilePath)
+		return ""
+	}
 
 	fmt.Println(
 		filepath.Base(destinationFilePath),
@@ -98,4 +111,40 @@ func (app *App) addSelectedFile(selectFilePath string) string {
 	)
 
 	return filepath.Base(destinationFilePath)
+}
+
+//Rabindra Neupane
+// SyncedFile describes a working file, without claiming it matches a remote peer.
+type SyncedFile struct {
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Modified string `json:"modified"`
+}
+
+//Rabindra Neupane
+// ListSyncedFiles reads the working folder directly; no metadata schema changes.
+// The current sync protocol supports files in this folder, not nested folders.
+func (app *App) ListSyncedFiles() ([]SyncedFile, error) {
+	if app.syncFolderPath == "" {
+		return nil, fmt.Errorf("Synced Files is not ready")
+	}
+	entries, err := os.ReadDir(app.syncFolderPath)
+	if err != nil {
+		return nil, fmt.Errorf("read Synced Files: %w", err)
+	}
+	files := make([]SyncedFile, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			continue
+		}
+		info, err := entry.Info()
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read file details: %w", err)
+		}
+		files = append(files, SyncedFile{Name: entry.Name(), Size: info.Size(), Modified: info.ModTime().UTC().Format(time.RFC3339Nano)})
+	}
+	return files, nil
 }

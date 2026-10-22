@@ -59,11 +59,11 @@ func (a *App) SyncFile(address, fileName string) (*SyncResult, error) {
 	if fileName == "" || fileName == "." || fileName == ".." || strings.ContainsAny(fileName, "/\\:\x00") {
 		return nil, fmt.Errorf("select a valid file name")
 	}
-	chunks, err := a.ChunkFile(filepath.Join(a.syncFolderPath, fileName))
-	if err != nil {
-		return nil, err
-	}
-	metadata, err := a.metadataForSync(fileName, chunks)
+	//Rabindra Neupane
+	// Release the processing lock before network I/O to allow reverse transfers.
+	a.fileProcessingMutex.Lock()
+	chunks, metadata, err := a.prepareFileForSync(fileName)
+	a.fileProcessingMutex.Unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -99,8 +99,49 @@ func (a *App) SyncFile(address, fileName string) (*SyncResult, error) {
 }
 
 //Rabindra Neupane
+// Caller holds fileProcessingMutex. Chunking/storage: Nisham Karki.
+// Version recording: Santosh Tripathee. Preparation coordination: Rabindra Neupane.
+func (a *App) prepareFileForSync(fileName string) ([]Chunk, network.FileMetadata, error) {
+	var metadata network.FileMetadata
+	if a.db == nil {
+		return nil, metadata, fmt.Errorf("file metadata database is unavailable")
+	}
+	path := filepath.Join(a.syncFolderPath, fileName)
+	if err := waitForFileReady(path); err != nil {
+		return nil, metadata, err
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		return nil, metadata, err
+	}
+	chunks, err := a.ChunkFile(path)
+	if err != nil {
+		return nil, metadata, err
+	}
+	if err := a.saveChunks(path, chunks); err != nil {
+		return nil, metadata, fmt.Errorf("save local chunks: %w", err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		return nil, metadata, err
+	}
+	if !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return nil, metadata, fmt.Errorf("file changed during preparation; finish saving and try Sync Now again")
+	}
+	deviceID, err := network.GetLocalIP()
+	if err != nil {
+		return nil, metadata, err
+	}
+	if err := RecordFileVersion(a.db, a.syncFolderPath, path, deviceID, chunks); err != nil {
+		return nil, metadata, fmt.Errorf("record local file version: %w", err)
+	}
+	metadata, err = a.metadataForSync(fileName, chunks)
+	return chunks, metadata, err
+}
+
+//Rabindra Neupane
 // Read Santosh's existing version records without changing the database schema
-// or recording a second version alongside the file watcher.
+// after serialized preparation records the current content.
 func (a *App) metadataForSync(fileName string, chunks []Chunk) (network.FileMetadata, error) {
 	metadata := network.FileMetadata{FileID: fileName, FileName: fileName, ChunkSize: chunkSize, ChunkHashes: make([]string, len(chunks))}
 	hasher := sha256.New()
@@ -251,7 +292,7 @@ func (a *App) startup(ctx context.Context) {
 	//Rabindra Neupane
 	// Reconstruction implementation: Nisham Karki
 	// Network integration: Rabindra Neupane
-	go network.StartServer(serviceCtx, "8080", a.ReconstructFile, a.completeIncomingTransfer, a.deviceRegistry)
+	go network.StartServer(serviceCtx, "8080", a.completeIncomingTransfer, a.deviceRegistry)
 }
 
 //Rabindra Neupane
@@ -343,42 +384,4 @@ func (a *App) SendFile(address string, fileName string) error {
 	filePath := filepath.Join(a.syncFolderPath, fileName)
 
 	return network.SendFile(address, filePath)
-}
-
-//Rabindra Neupane
-// Removed the obsolete first-chunk experiment; retain full and incremental transfers.
-//Rabindra Neupane
-// SendAllChunks sends all chunks of a file to another FileSync device on the network
-func (a *App) SendAllChunks(address string, fileName string) error {
-	//Rabindra Neupane
-	if !a.transferMutex.TryLock() {
-		return fmt.Errorf("another file transfer is already running")
-	}
-	defer a.transferMutex.Unlock()
-	filePath := filepath.Join(a.syncFolderPath, fileName)
-
-	// Chunk the file into smaller pieces for sending
-	chunks, err := a.ChunkFile(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to chunk file %s: %w", filePath, err)
-	}
-
-	// Check if any chunks were created for the file
-	if len(chunks) == 0 {
-		return fmt.Errorf("no chunks created for file: %s", filePath)
-	}
-	// Send all chunks of the file to the specified address
-	fmt.Printf("Sending %d chunks of %s to %s\n", len(chunks), fileName, address)
-
-	// Send chunk one by one, ensuring each chunk is successfully transmitted before moving on to the next one
-	for _, chunk := range chunks {
-		fmt.Printf("Sending chunk %d of %d...\n", chunk.Index+1, len(chunks))
-		err := network.SendChunk(address, fileName, chunk.Index, len(chunks), chunk.Hash, chunk.Data)
-		if err != nil {
-			return fmt.Errorf("failed to send chunk %d of %s: %w", chunk.Index, fileName, err)
-		}
-	}
-
-	fmt.Printf("All %d chunks of %s successfully sent to %s\n", len(chunks), fileName, address)
-	return nil
 }

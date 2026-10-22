@@ -35,6 +35,20 @@ export namespace main {
 	        this.Hash = source["Hash"];
 	    }
 	}
+	export class FileImportResult {
+	    names: string[];
+	    errors: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new FileImportResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.names = source["names"];
+	        this.errors = source["errors"];
+	    }
+	}
 	export class SyncResult {
 	    totalChunks: number;
 	    chunksSent: number;
@@ -51,6 +65,22 @@ export namespace main {
 	        this.chunksSent = source["chunksSent"];
 	        this.chunkBytesSent = source["chunkBytesSent"];
 	        this.conflictFile = source["conflictFile"];
+	    }
+	}
+	export class SyncedFile {
+	    name: string;
+	    size: number;
+	    modified: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SyncedFile(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.size = source["size"];
+	        this.modified = source["modified"];
 	    }
 	}
 

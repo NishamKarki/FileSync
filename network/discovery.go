@@ -16,8 +16,8 @@ func GetLocalIP() (string, error) {
 	defer connection.Close()
 	// Get the local address from the connection
 	localAddress := connection.LocalAddr().(*net.UDPAddr)
-	// Print the local IP address to the console
-	fmt.Println("FileSync local IP address:", localAddress.IP.String())
+	//Rabindra Neupane
+	// Return the address without printing on every heartbeat.
 	return localAddress.IP.String(), nil
 }
 

@@ -203,7 +203,9 @@ func (registry *DeviceRegistry) Close() { registry.cancel(); <-registry.done }
 //Rabindra Neupane
 func (registry *DeviceRegistry) run() {
 	defer close(registry.done)
-	ticker := time.NewTicker(10 * time.Second)
+	//Rabindra Neupane
+	// Send heartbeats often enough for the shorter offline timeout.
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
 		registry.sendHeartbeat()
@@ -407,7 +409,9 @@ func (registry *DeviceRegistry) readRegistry(ctx context.Context) ([]Device, err
 	}
 	defer rows.Close()
 	devices := make([]Device, 0)
-	cutoff := time.Now().Add(-30 * time.Second).UnixNano()
+	//Rabindra Neupane
+	// Mark devices offline after 15 seconds without a heartbeat.
+	cutoff := time.Now().Add(-15 * time.Second).UnixNano()
 	for rows.Next() {
 		var device Device
 		var seen int64

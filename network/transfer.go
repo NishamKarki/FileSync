@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -120,7 +121,11 @@ func (receiver *transferReceiver) start(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Cannot create transfer storage", 500)
 		return
 	}
-	root, err := os.MkdirTemp(staging, "incoming-")
+	//Rabindra Neupane
+	// Put the file name first while preserving unique staging per transfer.
+	// Escape stars so they cannot become MkdirTemp pattern placeholders.
+	stagingName := strings.ReplaceAll(metadata.FileName, "*", "_")
+	root, err := os.MkdirTemp(staging, stagingName+"-incoming-")
 	if err != nil {
 		http.Error(w, "Cannot create transfer folder", 500)
 		return
@@ -281,6 +286,8 @@ func (receiver *transferReceiver) complete(w http.ResponseWriter, r *http.Reques
 		if errors.As(err, &conflict) {
 			transfer.completed = true
 			transfer.conflictFile = conflict.ConflictFile
+			//Rabindra Neupane
+			// Keep staged chunks for inspection, including conflicting transfers.
 			// Conflicting chunks must not replace the accepted file's cache.
 			writeTransferJSON(w, TransferCompletion{TransferID: request.TransferID, ConflictFile: conflict.ConflictFile})
 			return
@@ -312,6 +319,8 @@ func (receiver *transferReceiver) complete(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	transfer.completed = true
+	//Rabindra Neupane
+	// Preserve staged chunks after completion so each transfer can be inspected.
 	//Rabindra Neupane
 	writeTransferJSON(w, TransferCompletion{TransferID: request.TransferID, Completed: true})
 }

@@ -1,10 +1,11 @@
 
 import {
-    AddFile,
+    AddFiles,
+    //Rabindra Neupane
+    ListSyncedFiles,
     DiscoverDevices,
     GetLocalIP,
     SendFile,
-    SendAllChunks,
     //Rabindra Neupane
     SyncFile,
     //Rabindra Neupane
@@ -31,12 +32,21 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
                 <p class="file-path" id="selected-files">No file selected</p>
             </div>
 
-            <button id = "select-file-button">Select file</button>
+                        <!-- Rabindra Neupane -->
+            <div>
+                <button id="select-file-button">Add files from computer</button>
+                <p>Add files to Synced Files.</p>
+            </div>
         </section>
 
         <section class="file-details">
-            <h2>Files</h2>
+            <!-- Rabindra Neupane -->
+            <h2>Files in Synced Files</h2>
+            <p>Select one or more files below to sync their working copies.</p>
+            <p id="file-list-status" role="status"></p>
 
+            <!-- Rabindra Neupane -->
+            <div class="file-table-scroll" tabindex="0" role="region" aria-label="Files in Synced Files, scroll to view more">
             <table class="file-table">
                 <thead>
                     <tr>
@@ -47,29 +57,9 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
                     </tr>
                 </thead>
 
-                <tbody>
-                    <tr>
-                        <td>project.doc</td>
-                        <td>Synced</td>
-                        <td>4.2 MB</td>
-                        <td>1:42 PM</td>
-                    </tr>
-
-                    <tr>
-                        <td>project.zip</td>
-                        <td>Syncing 63%</td>
-                        <td>82.5 MB</td>
-                        <td>1:39 PM</td>
-                    </tr>
-
-                    <tr>
-                        <td>presentation.dox</td>
-                        <td>Conflict</td>
-                        <td>12.3 MB</td>
-                        <td>1:35 PM</td>
-                    </tr>
-                </tbody>
+                <tbody id="synced-file-list"></tbody>
             </table>
+            </div>
         </section>
 
         <section class="progress-activity">
@@ -105,8 +95,12 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <footer class="footer">
             <button id="sync-now-button">Sync Now</button>
             <!-- Rabindra Neupane -->
-            <button id="send-whole-file-button">Send Whole File</button>
-            <button id="send-all-chunks-button">Send All Chunk</button>
+            <details class="transfer-diagnostics">
+                <summary>Transfer diagnostics</summary>
+                <div>
+                    <button id="send-whole-file-button">Send Whole File</button>
+                </div>
+            </details>
 
             <div>
                 <button>Conflicts</button>
@@ -298,7 +292,9 @@ document.getElementById('registered-devices-button')?.addEventListener('click', 
 });
 
 // Selected file information
-let selectedFileName: string | null = null;
+//Rabindra Neupane
+const selectedFileNames = new Set<string>();
+let selectionSource = 'Synced Files';
 // Use to populate "Recent activity" section with recently modified files
 const recentFileActivity = document.getElementById('recent-activity')
 
@@ -306,137 +302,159 @@ const recentFileActivity = document.getElementById('recent-activity')
 let transferInProgress = false;
 function setTransferBusy(busy: boolean) {
     transferInProgress = busy;
-    for (const id of ['sync-now-button', 'send-all-chunks-button', 'send-whole-file-button']) {
+    for (const id of ['sync-now-button', 'send-whole-file-button']) {
         const button = document.querySelector<HTMLButtonElement>(`#${id}`);
         if (button) button.disabled = busy;
     }
 }
 
 //Rabindra Neupane
+// Process a fixed selection sequentially; each file retains independent results.
 const syncNowButton = document.querySelector<HTMLButtonElement>('#sync-now-button');
-syncNowButton?.addEventListener('click', async () => {
-    //Rabindra Neupane
+const wholeFileButton = document.querySelector<HTMLButtonElement>('#send-whole-file-button');
+async function transferSelectedFiles(wholeFile: boolean) {
     if (transferInProgress) return;
-    // If no file is selected, prompt the user to select a file first.
-    if (!selectedFileName) {
-        console.log("Please select a file to sync first.");
-
-        // Update the recent activity section to inform the user
-        if (recentFileActivity) {
-            recentFileActivity.textContent = "Please select a file to sync first.";
-        }
-
+    if (selectedFileNames.size === 0 || !selectedDeviceAddress) {
+        if (recentFileActivity) recentFileActivity.textContent = 'Please select files and a device first.';
         return;
     }
-    // If no device is selected, prompt the user to select a device first.
-    if (!selectedDeviceAddress) {
-        console.log("Please select a device to sync first.");
-
-        // Update the recent activity section to inform the user
-        if (recentFileActivity) {
-            recentFileActivity.textContent = "Please select a device to sync first.";
-        }
-
-        return;
-    }
-
-    //Rabindra Neupane
-    const transferFileName = selectedFileName;
-    const transferDeviceAddress = selectedDeviceAddress;
-    const buttonLabel = syncNowButton.textContent;
+    const names = [...selectedFileNames];
+    const address = selectedDeviceAddress;
+    const button = wholeFile ? wholeFileButton : syncNowButton;
+    const label = button?.textContent ?? '';
+    const outcomes: string[] = [];
     setTransferBusy(true);
-    syncNowButton.textContent = 'Syncing...';
+    if (button) button.textContent = wholeFile ? 'Sending files...' : 'Syncing...';
     try {
-        console.log("Syncing changed chunks of:", transferFileName, "to device:", transferDeviceAddress);
-
-        // Update the recent activity section to inform the user that sending is in progress
-        if (recentFileActivity) {
-            //Rabindra Neupane
-            recentFileActivity.textContent = `Checking and syncing ${transferFileName}...`;
+        for (const [index, name] of names.entries()) {
+            if (recentFileActivity) recentFileActivity.textContent = [...outcomes, `${index + 1}/${names.length}: ${wholeFile ? 'Sending' : 'Syncing'} ${name}...`].join('\n');
+            try {
+                if (wholeFile) {
+                    await SendFile(address, name);
+                    outcomes.push(`Whole file ${name} received in Synced Files.`);
+                } else {
+                    const result = await SyncFile(address, name);
+                    outcomes.push(result.conflictFile
+                        ? `Conflict for ${name}. Receiver kept its file; incoming copy: ${result.conflictFile}`
+                        : `${name} verified on receiver. Sent ${result.chunksSent} of ${result.totalChunks} chunks (${result.chunkBytesSent} bytes of chunk data; excludes metadata and HTTP overhead).`);
+                }
+            } catch (error) {
+                outcomes.push(`Failed to ${wholeFile ? 'send' : 'sync'} ${name}: ${error}`);
+            }
         }
-
-        //Rabindra Neupane
-        const result = await SyncFile(transferDeviceAddress, transferFileName);
-		//Rabindra Neupane
-		if (result.conflictFile) {
-			if (recentFileActivity) recentFileActivity.textContent = `Conflict for ${transferFileName}. Receiver kept its current file and saved the incoming copy at ${result.conflictFile}.`;
-			return;
-		}
-
-        // Update the recent activity section to inform the user that the file has been synced successfully
-        if (recentFileActivity) {
-            //Rabindra Neupane
-            recentFileActivity.textContent = `${transferFileName} verified on receiver. Sent ${result.chunksSent} of ${result.totalChunks} chunks (${result.chunkBytesSent} bytes of chunk data; excludes metadata and HTTP overhead).`;
-        }
-        console.log("File sent successfully");
-    }
-    catch (error) {
-        // Update the recent activity section to inform the user that the sync failed
-        if (recentFileActivity) {
-            //Rabindra Neupane
-            recentFileActivity.textContent = `Failed to sync ${transferFileName}: ${error}`;
-        }
-
-        console.error("Failed to send file", error);
-    }
-    //Rabindra Neupane
-    finally {
+    } finally {
         setTransferBusy(false);
-        syncNowButton.textContent = buttonLabel;
+        if (button) button.textContent = label;
+        if (recentFileActivity) recentFileActivity.textContent = outcomes.join('\n');
+    }
+}
+syncNowButton?.addEventListener('click', () => { void transferSelectedFiles(false); });
+wholeFileButton?.addEventListener('click', () => { void transferSelectedFiles(true); });
+//Rabindra Neupane
+// File picker implementation: Nisham Karki. Working-folder selection: Rabindra Neupane.
+const selectFileButton = document.querySelector<HTMLButtonElement>('#select-file-button');
+let fileListRefreshing = false;
+let fileListSignature = '';
+
+
+//Rabindra Neupane
+function updateFileSelection() {
+    const label = document.getElementById('selected-files');
+    if (label) label.textContent = selectedFileNames.size
+        ? `${selectionSource} (${selectedFileNames.size} selected): ${[...selectedFileNames].join(', ')}`
+        : 'No files selected';
+    document.querySelectorAll<HTMLInputElement>('#synced-file-list input[type="checkbox"]').forEach(input => {
+        input.checked = selectedFileNames.has(input.value);
+        input.closest('tr')?.classList.toggle('selected-file', input.checked);
+    });
+}
+//Rabindra Neupane
+async function refreshSyncedFiles() {
+    if (fileListRefreshing) return;
+    fileListRefreshing = true;
+    const status = document.getElementById('file-list-status');
+    try {
+        const files = await ListSyncedFiles();
+        //Rabindra Neupane
+        for (const name of selectedFileNames) {
+            if (!files.some(file => file.name === name)) selectedFileNames.delete(name);
+        }
+        updateFileSelection();
+        const signature = JSON.stringify(files);
+        if (signature !== fileListSignature) {
+            const body = document.getElementById('synced-file-list');
+            if (!body) return;
+            body.replaceChildren();
+            for (const file of files) {
+                const row = document.createElement('tr');
+                const nameCell = document.createElement('td');
+                const label = document.createElement('label');
+                const radio = document.createElement('input');
+                //Rabindra Neupane
+                radio.type = 'checkbox';
+                radio.name = 'sync-file';
+                radio.value = file.name;
+                radio.checked = selectedFileNames.has(file.name);
+                row.classList.toggle('selected-file', radio.checked);
+                //Rabindra Neupane
+                radio.addEventListener('change', () => {
+                    if (radio.checked) selectedFileNames.add(file.name);
+                    else selectedFileNames.delete(file.name);
+                    selectionSource = 'Synced Files';
+                    updateFileSelection();
+                });
+                label.append(radio, document.createTextNode(` ${file.name}`));
+                nameCell.appendChild(label);
+                row.appendChild(nameCell);
+                for (const text of ['Available locally', `${file.size.toLocaleString()} bytes`, new Date(file.modified).toLocaleString()]) {
+                    const cell = document.createElement('td');
+                    cell.textContent = text;
+                    row.appendChild(cell);
+                }
+                body.appendChild(row);
+            }
+            fileListSignature = signature;
+        }
+        if (status) status.textContent = files.length ? `${files.length} file(s) available` : 'Synced Files is empty. Add a file from your computer.';
+    } catch (error) {
+        if (status) status.textContent = `Cannot load Synced Files: ${error}`;
+    } finally {
+        fileListRefreshing = false;
+    }
+}
+
+//Rabindra Neupane
+selectFileButton?.addEventListener('click', async () => {
+    selectFileButton.disabled = true;
+    try {
+        //Rabindra Neupane
+        const result = await AddFiles();
+        await refreshSyncedFiles();
+        if (result.names.length) {
+            selectedFileNames.clear();
+            result.names.forEach(name => selectedFileNames.add(name));
+            selectionSource = 'File picker - working copies in Synced Files';
+            updateFileSelection();
+        }
+        if (result.errors.length && recentFileActivity) recentFileActivity.textContent = result.errors.join('\n');
+    } catch (error) {
+        if (recentFileActivity) recentFileActivity.textContent = `Cannot add file: ${error}`;
+    } finally {
+        selectFileButton.disabled = false;
     }
 });
 
 //Rabindra Neupane
-// Keep whole-file transfer available for the proposal's performance comparison.
-const wholeFileButton = document.querySelector<HTMLButtonElement>('#send-whole-file-button');
-wholeFileButton?.addEventListener('click', async () => {
-    if (transferInProgress) return;
-    if (!selectedFileName || !selectedDeviceAddress) {
-        if (recentFileActivity) recentFileActivity.textContent = 'Please select a file and device first.';
-        return;
-    }
-    const fileName = selectedFileName;
-    const address = selectedDeviceAddress;
-    const label = wholeFileButton.textContent;
-    setTransferBusy(true);
-    wholeFileButton.textContent = 'Sending file...';
-    try {
-        if (recentFileActivity) recentFileActivity.textContent = `Sending the whole file ${fileName}...`;
-        await SendFile(address, fileName);
-        if (recentFileActivity) recentFileActivity.textContent = `Whole file ${fileName} received in Synced Files.`;
-    } catch (error) {
-        if (recentFileActivity) recentFileActivity.textContent = `Whole-file transfer failed: ${error}`;
-    } finally {
-        setTransferBusy(false);
-        wholeFileButton.textContent = label;
-    }
-});
-
-///// Nisham Karki
-// Makes button clickable by recognizing button id
-const selectFileButton = document.getElementById('select-file-button')
-// Use this to replace the "no file selected" with the name of the file selected
-const selectedFileText = document.getElementById('selected-files')
-
-// Event listener for when user click on "Select File"
-selectFileButton?.addEventListener('click', async () => {
-
-    // Call the AddFile() function and get the name of the file selected
-    // through file picker window
-    selectedFileName = await AddFile()
-
-    // Return the name of the file selected and replace "no file selected"
-    if (selectedFileName) {
-        selectedFileText!.textContent = selectedFileName
-    }
-    console.log("Selected File: ", selectedFileName)
-})
-
+void refreshSyncedFiles();
+const fileListTimer = window.setInterval(() => { void refreshSyncedFiles(); }, 2000);
+window.addEventListener('beforeunload', () => window.clearInterval(fileListTimer));
 ///// Nisham Karki
 // Array to store list of recent activities
 let recentActivites: string[] = []
 
 EventsOn('file-change', (modifiedFile: string) => {
+    //Rabindra Neupane
+    void refreshSyncedFiles();
     // Keep the most recent activity on top
     recentActivites.unshift(modifiedFile)
 
@@ -445,85 +463,10 @@ EventsOn('file-change', (modifiedFile: string) => {
     recentActivites = recentActivites.slice(0, 5)
 
     // THis will replace the currently displayed activities with any newer activity
-    if (recentFileActivity) {
+    if (recentFileActivity && !transferInProgress) {
         recentFileActivity.textContent = recentActivites.join('\n')
     }
 })
-
-//Rabindra Neupane
-// Removed the unused first-chunk button handler.
-///Rabindra Neupane
-// Send all chunks of the selected file to the selected device
-//Rabindra Neupane
-const sendAllChunksButton = document.querySelector<HTMLButtonElement>('#send-all-chunks-button');
-sendAllChunksButton?.addEventListener('click', async () => {
-
-    //Rabindra Neupane
-    if (transferInProgress) {
-        return;
-    }
-
-    // Send all chunks of the selected file to the selected device
-    if(! selectedFileName) {
-        console.log("Please select a file first.");
-
-        if (recentFileActivity) {
-            recentFileActivity.textContent = "Please select a file to sync first.";
-        }
-        return;
-    }
-
-    // Check if a FileSync device is selected
-    if(! selectedDeviceAddress) {
-        console.log("Please select a FileSync device first.");
-
-        if (recentFileActivity) {
-            recentFileActivity.textContent = "Please select a device first.";
-        }
-        return;
-    }
-
-    //Rabindra Neupane
-    // Lock the button before awaiting the transfer and keep its original label.
-    const buttonLabel = sendAllChunksButton.textContent;
-    const transferFileName = selectedFileName;
-    const transferDeviceAddress = selectedDeviceAddress;
-    setTransferBusy(true);
-    sendAllChunksButton.textContent = 'Sending chunks...';
-
-    // Attempt to send all chunks of the selected file to the selected device
-    try {
-        //Rabindra Neupane
-        console.log("Sending all chunks of", transferFileName, "to", transferDeviceAddress);
-
-        // Update the recent file activity to indicate that sending is in progress
-        if (recentFileActivity) {
-            //Rabindra Neupane
-            recentFileActivity.textContent = `Sending all chunks of ${transferFileName}...`;
-        }
-
-        //Rabindra Neupane
-        await SendAllChunks(transferDeviceAddress, transferFileName);
-
-        if (recentFileActivity) {
-            //Rabindra Neupane
-            recentFileActivity.textContent = `All chunks of ${transferFileName} sent successfully.`;
-        }
-        console.log("All chunks sent successfully.");
-    }
-    catch (error) {
-        console.error("Failed to send all chunks:", error);
-        if (recentFileActivity) {
-            //Rabindra Neupane
-            recentFileActivity.textContent = `Failed to send all chunks of ${transferFileName}: ${error}`;
-        }
-    }
-    //Rabindra Neupane
-    finally {
-        setTransferBusy(false);
-        sendAllChunksButton.textContent = buttonLabel;
-    }
-});
 
 //Rabindra Neupane
 // Poll registration separately from explicit subnet scans; avoid overlapping requests.

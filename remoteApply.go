@@ -62,8 +62,8 @@ func (a *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot str
 	if metadata.FileID != metadata.FileName || metadata.FileName == "" || filepath.Base(metadata.FileName) != metadata.FileName || metadata.Version < 1 {
 		return fmt.Errorf("invalid received file identity or version")
 	}
-	// Reconstruct and verify outside Synced Files. Local reconstruction continues
-	// to use Reconstructed Files through the existing public App method.
+	//Rabindra Neupane
+	// Reconstruct incoming transfers in isolation before applying them to Synced Files.
 	outputRoot, err := os.MkdirTemp(chunkRoot, "verified-output-")
 	if err != nil {
 		return err
@@ -275,8 +275,10 @@ func (a *App) recordReceivedVersion(tx *sql.Tx, m network.FileMetadata) error {
 // Preserve incoming contents outside the watched folder and leave both the
 // accepted file's metadata and its chunk cache unchanged. Repeated conflicts
 // with identical contents reuse the same copy instead of multiplying files.
+//Rabindra Neupane
+// Save incoming conflict copies under Synced Files Conflict.
 func (a *App) preserveIncomingConflict(metadata network.FileMetadata, verified string) error {
-	folder := filepath.Join(filepath.Dir(a.syncFolderPath), "Conflicting Files")
+	folder := filepath.Join(filepath.Dir(a.syncFolderPath), "Synced Files Conflict")
 	if err := os.MkdirAll(folder, 0755); err != nil {
 		return err
 	}
@@ -296,7 +298,7 @@ func (a *App) preserveIncomingConflict(metadata network.FileMetadata, verified s
 	} else {
 		return err
 	}
-	relative := filepath.Join("Conflicting Files", fileName)
+	relative := filepath.Join("Synced Files Conflict", fileName)
 	fmt.Printf("Synchronization conflict for %q: kept current file; incoming copy saved at %q\n", metadata.FileName, relative)
 	return &network.SyncConflictError{ConflictFile: relative}
 }

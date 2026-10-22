@@ -34,7 +34,8 @@ type StoredChunk struct {
 // partially reconstructed file in the sync folder if reconstruction fails.
 //
 //Rabindra Neupane
-// Local checks save to Reconstructed Files. Incoming transfers reconstruct in
+// Manual reconstruction saves to Reconstructed Files.
+// Incoming transfers reconstruct in
 // isolation before applyIncomingTransfer installs the verified file in Synced Files.
 func (app *App) ReconstructFile(fileName string) error {
 	//Rabindra Neupane

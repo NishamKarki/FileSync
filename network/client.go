@@ -144,7 +144,7 @@ func transferRequest(ctx context.Context, address, path, contentType string, bod
 }
 
 // CompareFileMetadata asks a peer which chunks it needs. The address uses the
-// same host:port format as SendChunk. This does not send file content or confirm
+// host:port format used by file transfers. This does not send file content or confirm
 // a completed synchronization. The context lets callers cancel the request.
 //Rabindra Neupane
 func CompareFileMetadata(ctx context.Context, address string, metadata FileMetadata) (*FileMetadataComparison, error) {
@@ -307,73 +307,5 @@ func SendFile(address, filePath string) error {
 	}
 
 	fmt.Println("file successfully sent to:", address)
-	return nil
-}
-
-// SendChunk transfers one individual file chunk to another FileSync
-// device on the local network
-//Rabindra Neupane
-func SendChunk(address string, fileName string, chunkIndex int, totalChunks int, chunkHash string, chunkData []byte) error {
-	var requestBody bytes.Buffer
-	chunkWriter := multipart.NewWriter(&requestBody)
-
-	// Send the name of the original file being split into chunks
-	if err := chunkWriter.WriteField("fileName", fileName); err != nil {
-		return err
-	}
-
-	// Send the index of the current chunk being sent
-	if err := chunkWriter.WriteField("chunkIndex", fmt.Sprintf("%d", chunkIndex)); err != nil {
-		return err
-	}
-
-	// Send the total number of chunks being sent
-	if err := chunkWriter.WriteField("totalChunks", fmt.Sprintf("%d", totalChunks)); err != nil {
-		return err
-	}
-
-	// Send the SHA-256 hash of the chunk so the receiving device can verify its integrity
-	if err := chunkWriter.WriteField("chunkHash", chunkHash); err != nil {
-		return err
-	}
-
-	// Add the chunk data to the request body
-	chunkPart, chunkPartCreationError := chunkWriter.CreateFormFile("Chunk", fmt.Sprintf("Chunk_%d.chunk", chunkIndex))
-	if chunkPartCreationError != nil {
-		return chunkPartCreationError
-	}
-
-	if _, err := chunkPart.Write(chunkData); err != nil {
-		return err
-	}
-
-	if err := chunkWriter.Close(); err != nil {
-		return err
-	}
-
-	// Send the chunk data to the receiving device
-	request, requestCreationError := http.NewRequest(http.MethodPost, "http://"+address+"/chunk", &requestBody)
-	if requestCreationError != nil {
-		return requestCreationError
-	}
-	request.Header.Set("Content-Type", chunkWriter.FormDataContentType())
-
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
-
-	response, requestSendError := client.Do(request)
-	if requestSendError != nil {
-		return requestSendError
-	}
-	defer response.Body.Close()
-
-	// Check if the chunk transfer was successful
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("chunk transfer failed: %s", response.Status)
-	}
-
-	// Print a message indicating the successful transfer of the chunk
-	fmt.Printf("Chunk %d of %s successfully sent to %s \n", chunkIndex, fileName, address)
 	return nil
 }

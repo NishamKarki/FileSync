@@ -3,7 +3,6 @@
 package main
 
 import (
-	"FileSyncWails/network"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -206,62 +205,11 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 				filepath.Base(filePath),
 			)
 
-			// Call ChunkFile function to divide file into fixed-sized shunks
-			// and generate SHA-256 hashes for each chunks
-			chunks, chunkError := app.ChunkFile(filePath)
-
-			if chunkError != nil {
-				fmt.Println(
-					"File chunking error:",
-					chunkError,
-				)
-				return
-			}
-
-			// Save chunks locally
-			app.SaveChunks(
-				filePath,
-				chunks,
-			)
-
-			// Reconstruct the file from the saved chunks.
-			reconstructionError := app.ReconstructFile(
-				filepath.Base(filePath),
-			)
-
-			if reconstructionError != nil {
-				fmt.Println(
-					"File reconstruction error:",
-					reconstructionError,
-				)
-				return
-			}
-
-			// Get local device ID
-			deviceID, deviceIDError := network.GetLocalIP()
-
-			if deviceIDError != nil {
-				fmt.Println(
-					"Failed to get device ID:",
-					deviceIDError,
-				)
-				return
-			}
-
-			// Record file version and chunk hashes in database
-			recordError := RecordFileVersion(
-				app.db,
-				app.syncFolderPath,
-				filePath,
-				deviceID,
-				chunks,
-			)
-
-			if recordError != nil {
-				fmt.Println(
-					"Failed to record file version:",
-					recordError,
-				)
+			//Rabindra Neupane
+			// Watcher: Nisham Karki. Share serialized preparation with Sync Now;
+			// Santosh's existing recorder deduplicates unchanged content.
+			if _, _, err := app.prepareFileForSync(filepath.Base(filePath)); err != nil {
+				fmt.Println("File processing error:", err)
 			}
 		},
 	)
