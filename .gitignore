@@ -1,0 +1,14 @@
+/Synced Files/
+/File Chunks/
+/Reconstructed Files/
+/build/bin/
+/frontend/dist/
+/frontend/node_modules/
+*.db
+# Rabindra Neupane - preserved incoming conflict copies are runtime data.
+/Synced Files Conflict/
+# Rabindra Neupane - keep older conflict copies ignored until moved.
+/Conflicting Files/
+# Rabindra Neupane - installation identity and coordinator settings stay local.
+/.filesync-device.json
+/.filesync-device-*.tmp

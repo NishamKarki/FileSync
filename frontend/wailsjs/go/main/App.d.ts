@@ -4,9 +4,11 @@ import {main} from '../models';
 import {network} from '../models';
 import {fsnotify} from '../models';
 
-export function AddFile():Promise<string>;
+export function AddFiles():Promise<main.FileImportResult>;
 
 export function ChunkFile(arg1:string):Promise<Array<main.Chunk>>;
+
+export function ConfigureCoordinator(arg1:boolean,arg2:string):Promise<void>;
 
 export function DiscoverDevices():Promise<Array<network.Device>>;
 
@@ -14,7 +16,13 @@ export function FileWatcher(arg1:string):Promise<void>;
 
 export function GetLocalIP():Promise<string>;
 
+export function GetRegisteredDevices():Promise<Array<network.Device>>;
+
+export function GetRegistrationStatus():Promise<network.RegistrationStatus>;
+
 export function HandleFileEvent(arg1:fsnotify.Event):Promise<void>;
+
+export function ListSyncedFiles():Promise<Array<main.SyncedFile>>;
 
 export function PingDevice(arg1:string):Promise<network.PingResponse>;
 
@@ -26,4 +34,4 @@ export function ScheduleFileProcessing(arg1:string):Promise<void>;
 
 export function SendFile(arg1:string,arg2:string):Promise<void>;
 
-export function SendFirstChunk(arg1:string,arg2:string):Promise<void>;
+export function SyncFile(arg1:string,arg2:string):Promise<main.SyncResult>;
