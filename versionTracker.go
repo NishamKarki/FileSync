@@ -3,7 +3,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -126,4 +128,20 @@ func waitForFileReady(filePath string) error {
 	}
 
 	return lastError
+}
+
+// Calculates one SHA-256 hash for the whole file from its chunks.
+// The chunks are fed in order, so the result is the same as hashing the
+// complete file at once. The same content always gives the same hash, on any
+// device and with any chunk size. Conflict detection compares these hashes
+// instead of version numbers, because each device counts its own versions.
+func computeContentHash(chunks []Chunk) string {
+	contentHasher := sha256.New()
+
+	// ChunkFile returns the chunks in order (index 0, 1, 2, ...)
+	for _, chunk := range chunks {
+		contentHasher.Write(chunk.Data)
+	}
+
+	return fmt.Sprintf("%x", contentHasher.Sum(nil))
 }
