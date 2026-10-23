@@ -33,6 +33,12 @@ func InitDatabase(syncFolderPath string) (*sql.DB, error) {
 		return nil, tableError
 	}
 
+	// Add the content_hash column to older databases that don't have it yet
+	columnError := addContentHashColumn(database)
+	if columnError != nil {
+		return nil, columnError
+	}
+
 	return database, nil
 }
 
@@ -61,6 +67,7 @@ func createTables(database *sql.DB) error {
 		based_on_version INTEGER,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		device_id TEXT,
+		content_hash TEXT,
 		FOREIGN KEY (file_id) REFERENCES files(id)
 	);`
 
@@ -123,4 +130,32 @@ func executeTableCreation(
 		database.Exec(tableQuery)
 
 	return tableExecutionError
+}
+
+// Databases created before conflict detection don't have the content_hash
+// column. CREATE TABLE IF NOT EXISTS skips tables that already exist, so it
+// can't add a new column to them. This checks whether the column is there
+// and adds it only if it's missing. Existing data is not changed.
+func addContentHashColumn(database *sql.DB) error {
+
+	// pragma_table_info lists the columns of a table.
+	// Count how many of them are named content_hash (0 or 1).
+	var columnCount int
+	checkError := database.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('file_versions') WHERE name = 'content_hash'",
+	).Scan(&columnCount)
+	if checkError != nil {
+		return checkError
+	}
+
+	// The column already exists, so there's nothing to do
+	if columnCount > 0 {
+		return nil
+	}
+
+	// Add the missing column. Older versions will have no value (NULL) in it.
+	_, alterError := database.Exec(
+		"ALTER TABLE file_versions ADD COLUMN content_hash TEXT",
+	)
+	return alterError
 }
