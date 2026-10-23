@@ -33,8 +33,13 @@ func InitDatabase(syncFolderPath string) (*sql.DB, error) {
 		return nil, tableError
 	}
 
-	// Add the content_hash column to older databases that don't have it yet
-	columnError := addContentHashColumn(database)
+	// Add newer columns to older databases that don't have them yet
+	columnError := addColumnIfMissing(database, "file_versions", "content_hash", "TEXT")
+	if columnError != nil {
+		return nil, columnError
+	}
+
+	columnError = addColumnIfMissing(database, "files", "last_synced_hash", "TEXT")
 	if columnError != nil {
 		return nil, columnError
 	}
@@ -54,6 +59,7 @@ func createTables(database *sql.DB) error {
 		current_version INTEGER NOT NULL DEFAULT 1,
 		size INTEGER,
 		modified_by TEXT,
+		last_synced_hash TEXT,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
 
@@ -132,17 +138,18 @@ func executeTableCreation(
 	return tableExecutionError
 }
 
-// Databases created before conflict detection don't have the content_hash
-// column. CREATE TABLE IF NOT EXISTS skips tables that already exist, so it
-// can't add a new column to them. This checks whether the column is there
-// and adds it only if it's missing. Existing data is not changed.
-func addContentHashColumn(database *sql.DB) error {
+// Databases created before conflict detection are missing some newer columns.
+// CREATE TABLE IF NOT EXISTS skips tables that already exist, so it can't add
+// a new column to them. This checks whether the column is there and adds it
+// only if it's missing. Existing data is not changed.
+func addColumnIfMissing(database *sql.DB, tableName string, columnName string, columnType string) error {
 
 	// pragma_table_info lists the columns of a table.
-	// Count how many of them are named content_hash (0 or 1).
+	// Count how many of them have this name (0 or 1).
 	var columnCount int
 	checkError := database.QueryRow(
-		"SELECT COUNT(*) FROM pragma_table_info('file_versions') WHERE name = 'content_hash'",
+		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?",
+		tableName, columnName,
 	).Scan(&columnCount)
 	if checkError != nil {
 		return checkError
@@ -153,9 +160,11 @@ func addContentHashColumn(database *sql.DB) error {
 		return nil
 	}
 
-	// Add the missing column. Older versions will have no value (NULL) in it.
+	// Add the missing column. Existing rows will have no value (NULL) in it.
+	// Table and column names can't be passed as ? values in SQL, so they are
+	// put into the text directly. They only ever come from our own code.
 	_, alterError := database.Exec(
-		"ALTER TABLE file_versions ADD COLUMN content_hash TEXT",
+		"ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + columnType,
 	)
 	return alterError
 }
