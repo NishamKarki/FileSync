@@ -81,12 +81,16 @@ func RecordFileVersion(db *sql.DB,
 		}
 	}
 
-	// Record this version in file_versions
+	// One hash for the whole file's content, used for conflict detection
+	contentHash := computeContentHash(chunks)
+
+	// Record this version in file_versions, including its content hash
 	result, versionInsertError := db.Exec(
-		`INSERT INTO file_versions (file_id, version_number, based_on_version, device_id)
-		 VALUES (?, ?, ?, ?)`,
-		relativePath, newVersionNumber, basedOnVersion, deviceID,
+		`INSERT INTO file_versions (file_id, version_number, based_on_version, device_id, content_hash)
+		 VALUES (?, ?, ?, ?, ?)`,
+		relativePath, newVersionNumber, basedOnVersion, deviceID, contentHash,
 	)
+
 	if versionInsertError != nil {
 		return versionInsertError
 	}
