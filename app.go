@@ -40,6 +40,9 @@ type App struct {
 //Rabindra Neupane
 // SyncResult reports chunk content bytes, excluding metadata and HTTP overhead.
 type SyncResult struct {
+	//Rabindra Neupane
+	KeepLocal      bool  `json:"keepLocal,omitempty"`
+	BaseUpdated    bool  `json:"baseUpdated"`
 	TotalChunks    int   `json:"totalChunks"`
 	ChunksSent     int   `json:"chunksSent"`
 	ChunkBytesSent int64 `json:"chunkBytesSent"`
@@ -52,6 +55,13 @@ type SyncResult struct {
 // Version metadata implementation: Santosh Tripathee
 // Incremental network integration: Rabindra Neupane
 func (a *App) SyncFile(address, fileName string) (*SyncResult, error) {
+	//Rabindra Neupane
+	return a.sendPreparedFile(address, fileName, false)
+}
+
+//Rabindra Neupane
+// Both transfer modes use Santosh's conflict metadata and verified acknowledgements.
+func (a *App) sendPreparedFile(address, fileName string, whole bool) (*SyncResult, error) {
 	if !a.transferMutex.TryLock() {
 		return nil, fmt.Errorf("another file transfer is already running")
 	}
@@ -67,15 +77,27 @@ func (a *App) SyncFile(address, fileName string) (*SyncResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if metadata.DeviceID == "" {
+		return nil, fmt.Errorf("register this device with a coordinator before sending files")
+	}
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	result := &SyncResult{TotalChunks: len(chunks)}
+	if whole {
+		data := make([]byte, 0, metadata.FileSize)
+		for _, chunk := range chunks {
+			data = append(data, chunk.Data...)
+		}
+		err := network.SendFile(ctx, address, metadata, data)
+		result.ChunksSent, result.ChunkBytesSent = len(chunks), int64(len(data))
+		return a.finishOutgoingSync(fileName, metadata, result, err)
 	}
 	plan, err := network.StartChunkTransfer(ctx, address, metadata)
 	if err != nil {
 		return nil, fmt.Errorf("start incremental sync: %w", err)
 	}
-	result := &SyncResult{TotalChunks: len(chunks)}
 	for _, index := range plan.NeededChunks {
 		chunk := chunks[index]
 		if err := network.SendTransferChunk(ctx, address, plan.TransferID, index, chunk.Data); err != nil {
@@ -85,14 +107,41 @@ func (a *App) SyncFile(address, fileName string) (*SyncResult, error) {
 		result.ChunkBytesSent += int64(len(chunk.Data))
 	}
 	// Even an unchanged or empty file needs explicit receiver verification.
-	if err := network.CompleteChunkTransfer(ctx, address, plan.TransferID); err != nil {
-		//Rabindra Neupane
+	err = network.CompleteChunkTransfer(ctx, address, plan.TransferID, metadata.FileHash)
+	return a.finishOutgoingSync(fileName, metadata, result, err)
+}
+
+//Rabindra Neupane
+// Never advance a conflict/keep-local base or a sender edited since the snapshot.
+func (a *App) finishOutgoingSync(fileName string, metadata network.FileMetadata, result *SyncResult, err error) (*SyncResult, error) {
+	if err != nil {
 		var conflict *network.SyncConflictError
+		var keep *network.KeepLocalError
 		if errors.As(err, &conflict) {
 			result.ConflictFile = conflict.ConflictFile
 			return result, nil
 		}
-		return nil, fmt.Errorf("complete incremental sync: %w", err)
+		if errors.As(err, &keep) {
+			result.KeepLocal = true
+			return result, nil
+		}
+		return nil, fmt.Errorf("complete verified sync: %w", err)
+	}
+	a.fileProcessingMutex.Lock()
+	defer a.fileProcessingMutex.Unlock()
+	current, err := HashFileOnDisk(filepath.Join(a.syncFolderPath, fileName))
+	if err != nil {
+		return nil, err
+	}
+	var version int
+	if err := a.db.QueryRow("SELECT current_version FROM files WHERE id=?", fileName).Scan(&version); err != nil {
+		return nil, err
+	}
+	if current == metadata.FileHash && version == metadata.Version {
+		if err := SetBaseHash(a.db, fileName, metadata.FileHash); err != nil {
+			return nil, fmt.Errorf("receiver verified file but saving sender base failed: %w", err)
+		}
+		result.BaseUpdated = true
 	}
 	fmt.Printf("Verified sync of %s: %d/%d chunks, %d chunk data bytes (excluding metadata/HTTP)\n", fileName, result.ChunksSent, result.TotalChunks, result.ChunkBytesSent)
 	return result, nil
@@ -128,9 +177,10 @@ func (a *App) prepareFileForSync(fileName string) ([]Chunk, network.FileMetadata
 	if !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
 		return nil, metadata, fmt.Errorf("file changed during preparation; finish saving and try Sync Now again")
 	}
-	deviceID, err := network.GetLocalIP()
-	if err != nil {
-		return nil, metadata, err
+	//Rabindra Neupane
+	deviceID := ""
+	if a.deviceRegistry != nil {
+		deviceID = a.deviceRegistry.Status().DeviceID
 	}
 	if err := RecordFileVersion(a.db, a.syncFolderPath, path, deviceID, chunks); err != nil {
 		return nil, metadata, fmt.Errorf("record local file version: %w", err)
@@ -153,6 +203,15 @@ func (a *App) metadataForSync(fileName string, chunks []Chunk) (network.FileMeta
 	metadata.FileHash = hex.EncodeToString(hasher.Sum(nil))
 	if a.db == nil {
 		return metadata, fmt.Errorf("file metadata database is unavailable")
+	}
+	//Rabindra Neupane
+	var err error
+	metadata.BaseHash, err = GetBaseHash(a.db, fileName)
+	if err != nil {
+		return metadata, err
+	}
+	if a.deviceRegistry != nil {
+		metadata.DeviceID = a.deviceRegistry.Status().DeviceID
 	}
 	tx, err := a.db.Begin()
 	if err != nil {
@@ -374,14 +433,7 @@ func (a *App) DiscoverDevices() []network.Device {
 
 // /Rabindra Neupane
 // SendFile sends a file to another FileSync device on the network
-func (a *App) SendFile(address string, fileName string) error {
+func (a *App) SendFile(address string, fileName string) (*SyncResult, error) {
 	//Rabindra Neupane
-	if !a.transferMutex.TryLock() {
-		return fmt.Errorf("another file transfer is already running")
-	}
-	defer a.transferMutex.Unlock()
-	// Create the path of the file that will be sent
-	filePath := filepath.Join(a.syncFolderPath, fileName)
-
-	return network.SendFile(address, filePath)
+	return a.sendPreparedFile(address, fileName, true)
 }

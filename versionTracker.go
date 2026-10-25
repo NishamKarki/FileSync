@@ -50,6 +50,11 @@ func RecordFileVersion(db *sql.DB, syncFolderPath, filePath, deviceID string, ch
 		}
 		comparison := compareRecordedChunks(tx, id, chunks)
 		if comparison == nil {
+			//Rabindra Neupane
+			// Backfill Santosh's whole-file hash for pre-migration versions.
+			if _, err := tx.Exec("UPDATE file_versions SET content_hash=? WHERE id=?", computeContentHash(chunks), id); err != nil {
+				return err
+			}
 			return tx.Commit()
 		}
 		if !errors.Is(comparison, errVersionChunksDiffer) {
@@ -75,7 +80,9 @@ func RecordFileVersion(db *sql.DB, syncFolderPath, filePath, deviceID string, ch
 	if known {
 		parent = current
 	}
-	result, err := tx.Exec("INSERT INTO file_versions (file_id, version_number, based_on_version, device_id) VALUES (?,?,?,?)", relativePath, next, parent, deviceID)
+	//Rabindra Neupane
+	// Santosh's content hash joins the existing atomic version/chunk transaction.
+	result, err := tx.Exec("INSERT INTO file_versions (file_id, version_number, based_on_version, device_id, content_hash) VALUES (?,?,?,?,?)", relativePath, next, parent, deviceID, computeContentHash(chunks))
 	if err != nil {
 		return err
 	}
@@ -171,4 +178,22 @@ func waitForFileReady(filePath string) error {
 	}
 
 	return lastError
+}
+
+// Author: Santosh Tripathee. Integration: Rabindra Neupane.
+//Rabindra Neupane
+// Calculates one SHA-256 hash for the whole file from its chunks.
+// The chunks are fed in order, so the result is the same as hashing the
+// complete file at once. The same content always gives the same hash, on any
+// device and with any chunk size. Conflict detection compares these hashes
+// instead of version numbers, because each device counts its own versions.
+func computeContentHash(chunks []Chunk) string {
+	contentHasher := sha256.New()
+
+	// ChunkFile returns the chunks in order (index 0, 1, 2, ...)
+	for _, chunk := range chunks {
+		contentHasher.Write(chunk.Data)
+	}
+
+	return fmt.Sprintf("%x", contentHasher.Sum(nil))
 }

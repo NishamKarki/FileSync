@@ -10,6 +10,10 @@ import "context"
 // Version counters are local; BaseChunkHashes identifies the shared content base.
 //Rabindra Neupane
 type FileMetadata struct {
+	//Rabindra Neupane
+	// Conflict contract agreed with Santosh Tripathee; base is a whole-file SHA-256.
+	BaseHash    string `json:"baseHash"`
+	DeviceID    string `json:"deviceId"`
 	FileID      string `json:"fileId"`
 	FileName    string `json:"fileName"`
 	Version     int    `json:"version"`
@@ -42,6 +46,9 @@ type TransferPlan struct {
 
 //Rabindra Neupane
 type TransferCompletion struct {
+	//Rabindra Neupane
+	KeepLocal  bool   `json:"keepLocal,omitempty"`
+	FileHash   string `json:"fileHash,omitempty"`
 	TransferID string `json:"transferId"`
 	Completed  bool   `json:"completed"`
 	//Rabindra Neupane
@@ -51,6 +58,14 @@ type TransferCompletion struct {
 //Rabindra Neupane
 // SyncConflictError means the original was kept and the incoming bytes were saved.
 type SyncConflictError struct{ ConflictFile string }
+
+//Rabindra Neupane
+type KeepLocalError struct{}
+
+//Rabindra Neupane
+func (*KeepLocalError) Error() string {
+	return "receiver has a newer version; pull it before syncing this older copy"
+}
 
 //Rabindra Neupane
 func (e *SyncConflictError) Error() string {

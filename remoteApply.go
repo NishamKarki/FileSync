@@ -83,47 +83,22 @@ func (a *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot str
 		return err
 	}
 	destination := filepath.Join(a.syncFolderPath, metadata.FileName)
-	previousHash, previousErr := hashStoredFile(destination)
-	if previousErr != nil && !os.IsNotExist(previousErr) {
-		return previousErr
-	}
-	hadPrevious := previousErr == nil
 	//Rabindra Neupane
-	// Compare actual bytes to the sender's base, never independent counters.
-	if hadPrevious && previousHash != metadata.FileHash {
-		matchesBase := false
-		if metadata.ChunkSize == chunkSize {
-			chunks, err := a.ChunkFile(destination)
-			if err != nil {
-				return err
-			}
-			matchesBase = metadata.BaseChunkHashes != nil && len(chunks) == len(metadata.BaseChunkHashes)
-			if matchesBase {
-				for index, chunk := range chunks {
-					if chunk.Hash != metadata.BaseChunkHashes[index] {
-						matchesBase = false
-						break
-					}
-				}
-			}
-			//Rabindra Neupane
-			if !matchesBase && len(metadata.BaseRevisions) > 0 {
-				hashes := make([]string, len(chunks))
-				for index, chunk := range chunks {
-					hashes[index] = chunk.Hash
-				}
-				identity := chunkRevisionIdentity(chunkSize, hashes)
-				for _, ancestor := range metadata.BaseRevisions {
-					if ancestor == identity {
-						matchesBase = true
-						break
-					}
-				}
-			}
-		}
-		if !matchesBase {
-			return a.preserveIncomingConflict(metadata, verified)
-		}
+	// Conflict decision: Santosh Tripathee. Hash actual bytes, not lagging metadata.
+	previousHash, err := HashFileOnDisk(destination)
+	if err != nil {
+		return err
+	}
+	hadPrevious := previousHash != ""
+	switch DetectConflict(metadata.BaseHash, previousHash, metadata.FileHash) {
+	case KeepLocal:
+		return &network.KeepLocalError{}
+	case Conflict:
+		return a.preserveIncomingConflict(metadata, verified)
+	case InSync, AcceptRemote:
+		// Verification succeeded; record content and shared base together below.
+	default:
+		return fmt.Errorf("unknown conflict decision")
 	}
 	// Preserve a rollback copy outside the watched folder before any replacement.
 	backupRoot, err := os.MkdirTemp(outputRoot, "backup-")
@@ -229,7 +204,11 @@ func (a *App) recordReceivedVersion(tx *sql.Tx, m network.FileMetadata) error {
 		}
 		comparison := compareRecordedChunks(tx, id, incoming)
 		if comparison == nil {
-			_, err := tx.Exec("UPDATE files SET size = ? WHERE id = ?", m.FileSize, m.FileID)
+			//Rabindra Neupane
+			if _, err := tx.Exec("UPDATE file_versions SET content_hash=? WHERE id=?", m.FileHash, id); err != nil {
+				return err
+			}
+			_, err := tx.Exec("UPDATE files SET size=?, last_synced_hash=?, modified_by=? WHERE id=?", m.FileSize, m.FileHash, m.DeviceID, m.FileID)
 			return err
 		}
 		if !errors.Is(comparison, errVersionChunksDiffer) {
@@ -244,10 +223,10 @@ func (a *App) recordReceivedVersion(tx *sql.Tx, m network.FileMetadata) error {
 	if maximum.Valid && int64(next) <= maximum.Int64 {
 		next = int(maximum.Int64) + 1
 	}
-	_, err = tx.Exec(`INSERT INTO files (id, path, name, current_version, size, modified_by)
-        VALUES (?, ?, ?, ?, ?, NULL)
+	_, err = tx.Exec(`INSERT INTO files (id, path, name, current_version, size, modified_by, last_synced_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET current_version=excluded.current_version,
-        size=excluded.size, modified_by=NULL, updated_at=CURRENT_TIMESTAMP`, m.FileID, m.FileID, m.FileName, next, m.FileSize)
+        size=excluded.size, modified_by=excluded.modified_by, last_synced_hash=excluded.last_synced_hash, updated_at=CURRENT_TIMESTAMP`, m.FileID, m.FileID, m.FileName, next, m.FileSize, m.DeviceID, m.FileHash)
 	if err != nil {
 		return err
 	}
@@ -255,7 +234,7 @@ func (a *App) recordReceivedVersion(tx *sql.Tx, m network.FileMetadata) error {
 	if known {
 		parent = current
 	}
-	result, err := tx.Exec("INSERT INTO file_versions (file_id, version_number, based_on_version, device_id) VALUES (?, ?, ?, NULL)", m.FileID, next, parent)
+	result, err := tx.Exec("INSERT INTO file_versions (file_id, version_number, based_on_version, device_id, content_hash) VALUES (?, ?, ?, ?, ?)", m.FileID, next, parent, m.DeviceID, m.FileHash)
 	if err != nil {
 		return err
 	}

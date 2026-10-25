@@ -248,7 +248,8 @@ button.device:disabled { opacity: 0.55; cursor: default; }
     scrollbar-color: #858585 #232323;
     margin-bottom: 16px;
 }
-.file-table-scroll .file-table { margin-bottom: 0; }
+/* Rabindra Neupane - no row gaps beyond the five-row viewport. */
+.file-table-scroll .file-table { margin-bottom: 0; border-collapse: collapse; }
 .file-table-scroll th {
     position: sticky;
     top: 0;

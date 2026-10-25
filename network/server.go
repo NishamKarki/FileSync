@@ -50,59 +50,6 @@ func pingHandler(responseWriter http.ResponseWriter, request *http.Request, regi
 	json.NewEncoder(responseWriter).Encode(response)
 }
 
-// fileHandler handels incomming file transfer requests and responds with a status code
-func fileHandler(responseWriter http.ResponseWriter, request *http.Request) {
-	fmt.Println("File transfer request received")
-	// Check if the request method is POST, otherwise return a "Method not allowed" error
-	if request.Method != http.MethodPost {
-		http.Error(responseWriter, "Only Post Requests are allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	// Read the uploaded file from the request
-	uploadedFile, uploadedFileHeader, fileReadError := request.FormFile("file")
-	if fileReadError != nil {
-		http.Error(responseWriter, "Failed to read uploaded file", http.StatusBadRequest)
-		return
-	}
-	defer uploadedFile.Close()
-	// Print the name of the received file to the console
-	fmt.Println("Received file:", uploadedFileHeader.Filename)
-
-	// Get the current working directory to save the uploaded file
-	projectDirectory, directoryLookupError := os.Getwd()
-	if directoryLookupError != nil {
-		http.Error(responseWriter, "Failed to get project directory", http.StatusInternalServerError)
-		return
-	}
-
-	// Create the path to the sync folder within the project directory
-	syncFolder := filepath.Join(projectDirectory, "Synced Files")
-
-	// Make sure the sync folder exists, create if it doesn't
-	syncFolderCreationError := os.MkdirAll(syncFolder, 0755)
-	if syncFolderCreationError != nil {
-		http.Error(responseWriter, "Failed to create sync folder", http.StatusInternalServerError)
-		return
-	}
-	// Create the destination file in the sync folder
-	destinationPath := filepath.Join(syncFolder, filepath.Base(uploadedFileHeader.Filename))
-	receivedFile, destinationFileCreationError := os.Create(destinationPath)
-	if destinationFileCreationError != nil {
-		http.Error(responseWriter, "Failed to create destination file", http.StatusInternalServerError)
-		return
-	}
-	defer receivedFile.Close()
-
-	// Copy the received file to the destination file
-	_, fileSaveError := io.Copy(receivedFile, uploadedFile)
-	if fileSaveError != nil {
-		http.Error(responseWriter, "Failed to save uploaded file", http.StatusInternalServerError)
-		return
-	}
-	fmt.Println("File successfully saved to:", destinationPath)
-	responseWriter.WriteHeader(http.StatusOK)
-}
-
 // StartServer uses the application's reconstruction method after chunk receipt.
 // The callback keeps reconstruction owned by the app without an import cycle.
 //Rabindra Neupane
@@ -121,7 +68,8 @@ func StartServer(ctx context.Context, port string, completeTransfer func(FileMet
 		mux.Handle("/devices/", registry.Handler())
 	}
 	// Create a new HTTP ServeMux to handle incoming file transfer requests
-	mux.HandleFunc("/file", fileHandler)
+	//Rabindra Neupane
+	// Whole-file route is attached after locating project storage below.
 	//Rabindra Neupane
 	// Verified chunk uploads use the isolated /transfer/ workflow.
 	// Compare metadata without writing chunks or replacing the destination file.
@@ -132,6 +80,7 @@ func StartServer(ctx context.Context, port string, completeTransfer func(FileMet
 		fmt.Println("Cannot locate transfer storage:", directoryError)
 		return
 	}
+	mux.Handle("/file", NewWholeFileHandler(projectDirectory, completeTransfer))
 	mux.Handle("/transfer/", NewTransferHandler(projectDirectory, completeTransfer))
 
 	// Print server starting message to the console
@@ -258,6 +207,14 @@ func validateFileMetadata(m FileMetadata) error {
 	}
 	if !validHash(m.FileHash) {
 		return fmt.Errorf("Invalid file SHA-256 hash")
+	}
+	//Rabindra Neupane
+	if m.BaseHash != "" && !validHash(m.BaseHash) {
+		return fmt.Errorf("Invalid base SHA-256 hash")
+	}
+	deviceID, err := hex.DecodeString(m.DeviceID)
+	if err != nil || len(deviceID) != 16 || m.DeviceID != strings.ToLower(m.DeviceID) {
+		return fmt.Errorf("A persistent registered sender deviceId is required; update both peers")
 	}
 	for _, hash := range m.ChunkHashes {
 		if !validHash(hash) {

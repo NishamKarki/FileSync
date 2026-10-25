@@ -50,6 +50,8 @@ export namespace main {
 	    }
 	}
 	export class SyncResult {
+	    keepLocal?: boolean;
+	    baseUpdated: boolean;
 	    totalChunks: number;
 	    chunksSent: number;
 	    chunkBytesSent: number;
@@ -61,6 +63,8 @@ export namespace main {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.keepLocal = source["keepLocal"];
+	        this.baseUpdated = source["baseUpdated"];
 	        this.totalChunks = source["totalChunks"];
 	        this.chunksSent = source["chunksSent"];
 	        this.chunkBytesSent = source["chunkBytesSent"];

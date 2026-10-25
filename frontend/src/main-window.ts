@@ -329,14 +329,17 @@ async function transferSelectedFiles(wholeFile: boolean) {
         for (const [index, name] of names.entries()) {
             if (recentFileActivity) recentFileActivity.textContent = [...outcomes, `${index + 1}/${names.length}: ${wholeFile ? 'Sending' : 'Syncing'} ${name}...`].join('\n');
             try {
-                if (wholeFile) {
-                    await SendFile(address, name);
-                    outcomes.push(`Whole file ${name} received in Synced Files.`);
+                //Rabindra Neupane
+                // Surface Santosh's decisions consistently for both transfer modes.
+                const result = wholeFile ? await SendFile(address, name) : await SyncFile(address, name);
+                if (result.keepLocal) {
+                    outcomes.push(`${name}: receiver kept its newer version. Pull it before sending this older copy.`);
+                } else if (result.conflictFile) {
+                    outcomes.push(`Conflict for ${name}. Receiver kept its file; incoming copy: ${result.conflictFile}`);
                 } else {
-                    const result = await SyncFile(address, name);
-                    outcomes.push(result.conflictFile
-                        ? `Conflict for ${name}. Receiver kept its file; incoming copy: ${result.conflictFile}`
-                        : `${name} verified on receiver. Sent ${result.chunksSent} of ${result.totalChunks} chunks (${result.chunkBytesSent} bytes of chunk data; excludes metadata and HTTP overhead).`);
+                    const details = wholeFile ? 'Whole file verified on receiver.'
+                        : `Verified on receiver. Sent ${result.chunksSent} of ${result.totalChunks} chunks (${result.chunkBytesSent} bytes of chunk data; excludes metadata and HTTP overhead).`;
+                    outcomes.push(`${name}: ${details}${result.baseUpdated ? '' : ' Local file changed during transfer; latest edits are not confirmed synced.'}`);
                 }
             } catch (error) {
                 outcomes.push(`Failed to ${wholeFile ? 'send' : 'sync'} ${name}: ${error}`);
@@ -355,6 +358,23 @@ wholeFileButton?.addEventListener('click', () => { void transferSelectedFiles(tr
 const selectFileButton = document.querySelector<HTMLButtonElement>('#select-file-button');
 let fileListRefreshing = false;
 let fileListSignature = '';
+//Rabindra Neupane
+// Measure five real rows so wrapped names and window resizing stay within the limit.
+function sizeFileList() {
+    const viewport = document.querySelector<HTMLElement>('.file-table-scroll');
+    const table = document.querySelector<HTMLTableElement>('.file-table');
+    if (!viewport || !table) return;
+    const rows = table.tBodies[0]?.rows;
+    if (!rows?.length) return;
+    const lastVisibleRow = rows[Math.min(5, rows.length) - 1];
+    const height = lastVisibleRow.getBoundingClientRect().bottom - table.getBoundingClientRect().top;
+    viewport.style.maxHeight = `${Math.ceil(height)}px`;
+}
+//Rabindra Neupane
+const fileTableObserver = new ResizeObserver(sizeFileList);
+const fileTable = document.querySelector('.file-table');
+if (fileTable) fileTableObserver.observe(fileTable);
+window.addEventListener('beforeunload', () => fileTableObserver.disconnect());
 
 
 //Rabindra Neupane
@@ -413,6 +433,8 @@ async function refreshSyncedFiles() {
                 }
                 body.appendChild(row);
             }
+            //Rabindra Neupane
+            sizeFileList();
             fileListSignature = signature;
         }
         if (status) status.textContent = files.length ? `${files.length} file(s) available` : 'Synced Files is empty. Add a file from your computer.';

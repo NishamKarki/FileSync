@@ -33,6 +33,14 @@ func InitDatabase(syncFolderPath string) (*sql.DB, error) {
 		return nil, tableError
 	}
 
+	//Rabindra Neupane
+	// Santosh Tripathee's conflict metadata migrations, integrated with the registry.
+	for _, column := range [][2]string{{"file_versions", "content_hash"}, {"files", "last_synced_hash"}} {
+		if err := addColumnIfMissing(database, column[0], column[1], "TEXT"); err != nil {
+			database.Close()
+			return nil, err
+		}
+	}
 	return database, nil
 }
 
@@ -136,4 +144,37 @@ func executeTableCreation(
 		database.Exec(tableQuery)
 
 	return tableExecutionError
+}
+
+// Author: Santosh Tripathee. Integration: Rabindra Neupane.
+//Rabindra Neupane
+// Databases created before conflict detection are missing some newer columns.
+// CREATE TABLE IF NOT EXISTS skips tables that already exist, so it can't add
+// a new column to them. This checks whether the column is there and adds it
+// only if it's missing. Existing data is not changed.
+func addColumnIfMissing(database *sql.DB, tableName string, columnName string, columnType string) error {
+
+	// pragma_table_info lists the columns of a table.
+	// Count how many of them have this name (0 or 1).
+	var columnCount int
+	checkError := database.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?",
+		tableName, columnName,
+	).Scan(&columnCount)
+	if checkError != nil {
+		return checkError
+	}
+
+	// The column already exists, so there's nothing to do
+	if columnCount > 0 {
+		return nil
+	}
+
+	// Add the missing column. Existing rows will have no value (NULL) in it.
+	// Table and column names can't be passed as ? values in SQL, so they are
+	// put into the text directly. They only ever come from our own code.
+	_, alterError := database.Exec(
+		"ALTER TABLE " + tableName + " ADD COLUMN " + columnName + " " + columnType,
+	)
+	return alterError
 }

@@ -10,8 +10,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -56,7 +54,7 @@ func SendTransferChunk(ctx context.Context, address, transferID string, index in
 
 //Rabindra Neupane
 // CompleteChunkTransfer succeeds only after the receiver verifies and reconstructs.
-func CompleteChunkTransfer(ctx context.Context, address, transferID string) error {
+func CompleteChunkTransfer(ctx context.Context, address, transferID, expectedHash string) error {
 	body, err := json.Marshal(struct {
 		TransferID string `json:"transferId"`
 	}{transferID})
@@ -68,10 +66,13 @@ func CompleteChunkTransfer(ctx context.Context, address, transferID string) erro
 		return err
 	}
 	//Rabindra Neupane
+	if result.TransferID == transferID && !result.Completed && result.KeepLocal {
+		return &KeepLocalError{}
+	}
 	if result.TransferID == transferID && !result.Completed && result.ConflictFile != "" {
 		return &SyncConflictError{ConflictFile: result.ConflictFile}
 	}
-	if result.TransferID != transferID || !result.Completed {
+	if result.TransferID != transferID || !result.Completed || result.FileHash != expectedHash {
 		return fmt.Errorf("receiver did not confirm completion")
 	}
 	return nil
@@ -251,61 +252,60 @@ func PingDevice(address string) (*PingResponse, error) {
 	return &pingResponse, nil
 }
 
-// SendFile sends a complete file from a current FileSync devicec to another
-// FileSync device on the local network
-// It returns nil when the receiving decice confirms successful transfer with HTTP response
 //Rabindra Neupane
-func SendFile(address, filePath string) error {
-	// Open the file to be sent
-	fileToSend, fileOpenError := os.Open(filePath)
-	if fileOpenError != nil {
-		return fileOpenError
-	}
-	defer fileToSend.Close()
-	// Build a body containing the file data
-	// that will be sent to the receiving FileSync peer.
-	var requestBody bytes.Buffer
-	fileWriter := multipart.NewWriter(&requestBody)
-
-	//Add the file to the request body
-	filePart, filePartCreationError := fileWriter.CreateFormFile("file", filepath.Base(filePath))
-	if filePartCreationError != nil {
-		return filePartCreationError
-	}
-
-	// Copy the file contents into the request body
-	if _, err := io.Copy(filePart, fileToSend); err != nil {
+// Whole-file comparison keeps one multipart payload but shares conflict handling.
+func SendFile(ctx context.Context, address string, metadata FileMetadata, data []byte) error {
+	if err := validateFileMetadata(metadata); err != nil {
 		return err
 	}
-
-	// Close the multipart writer to finalize the request body
-	if err := fileWriter.Close(); err != nil {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
 		return err
 	}
-
-	// Create a new HTTP request for sending the file
-	request, requestCreationError := http.NewRequest(http.MethodPost, "http://"+address+"/file", &requestBody)
-	if requestCreationError != nil {
-		return requestCreationError
+	if err := writer.WriteField("metadata", string(encoded)); err != nil {
+		return err
 	}
-	request.Header.Set("Content-Type", fileWriter.FormDataContentType())
-
-	// Create an HTTP httpClient with a timeout for sending the file
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+	part, err := writer.CreateFormFile("file", metadata.FileName)
+	if err != nil {
+		return err
 	}
-
-	response, requestSendError := httpClient.Do(request)
-	if requestSendError != nil {
-		return requestSendError
+	if _, err := part.Write(data); err != nil {
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+address+"/file", &body)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	defer client.CloseIdleConnections()
+	response, err := client.Do(request)
+	if err != nil {
+		return err
 	}
 	defer response.Body.Close()
-
-	// Check if the response status code is not OK (200)
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("file transfer failed: %s", response.Status)
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return fmt.Errorf("whole-file transfer: %s: %s", response.Status, strings.TrimSpace(string(detail)))
 	}
-
-	fmt.Println("file successfully sent to:", address)
+	var result TransferCompletion
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
+		return err
+	}
+	if result.KeepLocal && !result.Completed {
+		return &KeepLocalError{}
+	}
+	if result.ConflictFile != "" && !result.Completed {
+		return &SyncConflictError{ConflictFile: result.ConflictFile}
+	}
+	if !result.Completed || result.FileHash != metadata.FileHash {
+		return fmt.Errorf("receiver did not verify the whole file")
+	}
 	return nil
 }
