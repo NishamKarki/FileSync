@@ -1,13 +1,13 @@
 export namespace fsnotify {
-
+	
 	export class Event {
 	    Name: string;
 	    Op: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Event(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Name = source["Name"];
@@ -18,16 +18,16 @@ export namespace fsnotify {
 }
 
 export namespace main {
-
+	
 	export class Chunk {
 	    Index: number;
 	    Data: number[];
 	    Hash: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Chunk(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.Index = source["Index"];
@@ -38,11 +38,11 @@ export namespace main {
 	export class FileImportResult {
 	    names: string[];
 	    errors: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new FileImportResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.names = source["names"];
@@ -56,11 +56,11 @@ export namespace main {
 	    chunksSent: number;
 	    chunkBytesSent: number;
 	    conflictFile?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SyncResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.keepLocal = source["keepLocal"];
@@ -75,11 +75,11 @@ export namespace main {
 	    name: string;
 	    size: number;
 	    modified: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SyncedFile(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -91,7 +91,7 @@ export namespace main {
 }
 
 export namespace network {
-
+	
 	export class Device {
 	    id: string;
 	    name: string;
@@ -100,11 +100,11 @@ export namespace network {
 	    online: boolean;
 	    lastSeen: string;
 	    coordinator: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Device(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -122,11 +122,11 @@ export namespace network {
 	    deviceName: string;
 	    deviceId: string;
 	    coordinator: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PingResponse(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
@@ -145,11 +145,11 @@ export namespace network {
 	    configured: boolean;
 	    registered: boolean;
 	    lastError: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new RegistrationStatus(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.deviceId = source["deviceId"];

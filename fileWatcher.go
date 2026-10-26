@@ -81,7 +81,6 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	}
 
 	// Check for Files create event
-	//Rabindra Neupane
 	if fileWatcherEvent.Op&fsnotify.Create != 0 {
 		fmt.Println("CREATE:", fileName)
 
@@ -98,7 +97,6 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 
 	// Check for Files Write (modified) event
 	// Copying a file into Synced File also trigger Write event
-	//Rabindra Neupane
 	if fileWatcherEvent.Op&fsnotify.Write != 0 {
 		fmt.Println("WRITE:", fileName)
 
@@ -114,21 +112,85 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	}
 
 	// Check for Files rename event
-	//Rabindra Neupane
+	// Check for file rename event.
 	if fileWatcherEvent.Op&fsnotify.Rename != 0 {
-		fmt.Println("RENAME:", fileName)
 
-		// Notify the frontend the file rename event
+		fmt.Println(
+			"RENAME:",
+			fileName,
+		)
+
+		// Remove the old chunk folder.
+		oldChunkFolder :=
+			filepath.Join(
+				app.chunkStoragePath,
+				fileName,
+			)
+
+		chunkFolderRemovalError :=
+			os.RemoveAll(oldChunkFolder)
+
+		if chunkFolderRemovalError != nil {
+			fmt.Println(
+				"Old chunk folder removal error:",
+				chunkFolderRemovalError,
+			)
+		}
+
+		// Remove the old reconstructed copy if one exists.
+		oldReconstructedFile :=
+			filepath.Join(
+				app.reconstructedFilesPath,
+				fileName,
+			)
+
+		reconstructedFileRemovalError :=
+			os.Remove(oldReconstructedFile)
+
+		if reconstructedFileRemovalError != nil &&
+			!os.IsNotExist(reconstructedFileRemovalError) {
+
+			fmt.Println(
+				"Old reconstructed file removal error:",
+				reconstructedFileRemovalError,
+			)
+		}
+
+		// Remove metadata belonging to the old file name.
+		relativePath, relativePathError :=
+			filepath.Rel(
+				app.syncFolderPath,
+				fileWatcherEvent.Name,
+			)
+
+		if relativePathError == nil {
+			_, databaseRemovalError :=
+				app.db.Exec(
+					"DELETE FROM files WHERE id = ?",
+					relativePath,
+				)
+
+			if databaseRemovalError != nil {
+				fmt.Println(
+					"Old file metadata removal error:",
+					databaseRemovalError,
+				)
+			}
+		}
+
+		// Notify the frontend.
 		runtime.EventsEmit(
-			app.ctx, "file-change", "Renamed: "+fileName,
+			app.ctx,
+			"file-change",
+			"Renamed: "+fileName,
 		)
 	}
 
 	// Check for Files delete event
-	//Rabindra Neupane
 	if fileWatcherEvent.Op&fsnotify.Remove != 0 {
 		fmt.Println("REMOVE:", fileName)
 
+		//Rabindra Neupane
 		// Convert the deteled/removed file path into relative file path
 		// so that the matching file can be removed from the database
 		relativePath, _ := filepath.Rel(app.syncFolderPath, fileWatcherEvent.Name)
@@ -208,8 +270,30 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 			//Rabindra Neupane
 			// Watcher: Nisham Karki. Share serialized preparation with Sync Now;
 			// Santosh's existing recorder deduplicates unchanged content.
-			if _, _, err := app.prepareFileForSync(filepath.Base(filePath)); err != nil {
-				fmt.Println("File processing error:", err)
+			fileName := filepath.Base(filePath)
+
+			// Chunk, hash, save chunks, and record the local file version.
+			_, _, fileProcessingError :=
+				app.prepareFileForSync(fileName)
+
+			if fileProcessingError != nil {
+				fmt.Println(
+					"File processing error:",
+					fileProcessingError,
+				)
+				return
+			}
+
+			// Reconstruct the complete file from the stored chunks.
+			reconstructionError :=
+				app.ReconstructFile(fileName)
+
+			if reconstructionError != nil {
+				fmt.Println(
+					"File reconstruction error:",
+					reconstructionError,
+				)
+				return
 			}
 		},
 	)
