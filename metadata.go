@@ -56,6 +56,7 @@ func createTables(database *sql.DB) error {
 		current_version INTEGER NOT NULL DEFAULT 1,
 		size INTEGER,
 		modified_by TEXT,
+		last_synced_hash TEXT,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
 
@@ -69,6 +70,7 @@ func createTables(database *sql.DB) error {
 		based_on_version INTEGER,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		device_id TEXT,
+		content_hash TEXT,
 		FOREIGN KEY (file_id) REFERENCES files(id)
 	);`
 
