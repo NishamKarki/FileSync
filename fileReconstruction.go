@@ -33,19 +33,73 @@ type StoredChunk struct {
 // the Synced Files folder. This prevents FileSync from leaving a
 // partially reconstructed file in the sync folder if reconstruction fails.
 //
-//Rabindra Neupane
+// Rabindra Neupane
 // Manual reconstruction saves to Reconstructed Files.
 // Incoming transfers reconstruct in
 // isolation before applyIncomingTransfer installs the verified file in Synced Files.
 func (app *App) ReconstructFile(fileName string) error {
-	//Rabindra Neupane
-	return app.reconstructFile(fileName, nil)
+
+	// Use only the file name.
+	fileName =
+		filepath.Base(fileName)
+
+	// Reconstruct the file from the locally stored chunks.
+	reconstructionError :=
+		app.reconstructStoredFile(
+			fileName,
+			nil,
+		)
+
+	if reconstructionError != nil {
+		return reconstructionError
+	}
+
+	// Create path to the original file.
+	originalFilePath :=
+		filepath.Join(
+			app.syncFolderPath,
+			fileName,
+		)
+
+	// Create path to the completed reconstructed file.
+	reconstructedFilePath :=
+		filepath.Join(
+			app.reconstructedFilesPath,
+			fileName,
+		)
+
+	// Compare SHA-256 checksums of both complete files.
+	integrityVerified, integrityVerificationError :=
+		VerifyFileIntegrity(
+			originalFilePath,
+			reconstructedFilePath,
+		)
+
+	if integrityVerificationError != nil {
+		return fmt.Errorf(
+			"file integrity verification error: %w",
+			integrityVerificationError,
+		)
+	}
+
+	if !integrityVerified {
+		return fmt.Errorf(
+			"file integrity verification failed: SHA-256 checksums do not match",
+		)
+	}
+
+	fmt.Println(
+		"FILE INTEGRITY VERIFIED:",
+		fileName,
+	)
+
+	return nil
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Reconstruction implementation: Nisham Karki
 // Transfer size and hash verification: Rabindra Neupane
-func (app *App) reconstructFile(fileName string, metadata *network.FileMetadata) error {
+func (app *App) reconstructStoredFile(fileName string, metadata *network.FileMetadata) error {
 
 	// Use only the actual file name to prevent folder paths
 	// from being included in the reconstruction request.
@@ -335,7 +389,7 @@ func (app *App) reconstructFile(fileName string, metadata *network.FileMetadata)
 	return nil
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Go's Windows rename uses MOVEFILE_REPLACE_EXISTING. A failed rename leaves
 // the original destination in place; retry temporary locks without deleting it.
 func replaceVerifiedFile(source, destination string) error {

@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-//Rabindra Neupane
+// Rabindra Neupane
 func hashStoredFile(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -27,7 +27,7 @@ func hashStoredFile(path string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Caller holds fileProcessingMutex. Keep the marker while contents match so
 // delayed/duplicate watcher events are ignored. A real edit removes the marker.
 func (a *App) matchesRemoteFile(path string) bool {
@@ -50,7 +50,7 @@ func (a *App) matchesRemoteFile(path string) bool {
 	return false
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Reconstruction: Nisham Karki. Version schema: Santosh Tripathee.
 // Remote application and watcher coordination: Rabindra Neupane.
 func (a *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot string) error {
@@ -75,7 +75,7 @@ func (a *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot str
 		}
 	}()
 	transferApp := &App{chunkStoragePath: chunkRoot, reconstructedFilesPath: outputRoot}
-	if err := transferApp.reconstructFile(metadata.FileName, &metadata); err != nil {
+	if err := transferApp.reconstructStoredFile(metadata.FileName, &metadata); err != nil {
 		return err
 	}
 	verified := filepath.Join(outputRoot, metadata.FileName)
@@ -157,7 +157,7 @@ func (a *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot str
 	return nil
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 func copyRemoteBackup(source, destination string) error {
 	input, err := os.Open(source)
 	if err != nil {
@@ -182,7 +182,7 @@ func copyRemoteBackup(source, destination string) error {
 	return closeErr
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Version schema: Santosh Tripathee. Receiver mapping: Rabindra Neupane.
 // Sender counters are not shared revision IDs. Accepted contents get a local
 // sequence number and local parent; repeated identical contents reuse the row.
@@ -250,11 +250,11 @@ func (a *App) recordReceivedVersion(tx *sql.Tx, m network.FileMetadata) error {
 	return nil
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Preserve incoming contents outside the watched folder and leave both the
 // accepted file's metadata and its chunk cache unchanged. Repeated conflicts
 // with identical contents reuse the same copy instead of multiplying files.
-//Rabindra Neupane
+// Rabindra Neupane
 // Save incoming conflict copies under Synced Files Conflict.
 func (a *App) preserveIncomingConflict(metadata network.FileMetadata, verified string) error {
 	folder := filepath.Join(filepath.Dir(a.syncFolderPath), "Synced Files Conflict")
@@ -282,10 +282,10 @@ func (a *App) preserveIncomingConflict(metadata network.FileMetadata, verified s
 	return &network.SyncConflictError{ConflictFile: relative}
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 var errVersionChunksDiffer = errors.New("version chunk contents differ")
 
-//Rabindra Neupane
+// Rabindra Neupane
 func compareRecordedChunks(tx *sql.Tx, versionID int64, chunks []Chunk) error {
 	rows, err := tx.Query("SELECT chunk_index, chunk_hash FROM chunks WHERE file_version_id = ? ORDER BY chunk_index", versionID)
 	if err != nil {
