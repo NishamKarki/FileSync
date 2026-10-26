@@ -13,7 +13,17 @@ import (
 // in local "File Chunks" directory
 // Each synchronized files get their own chunk folder
 // If modified files become smaller, and produce less chunks, old chunks are removed
+//Rabindra Neupane
+// Preserve Nisham Karki's public method while internal callers receive failures.
 func (app *App) SaveChunks(filePath string, chunks []Chunk) {
+	if err := app.saveChunks(filePath, chunks); err != nil {
+		fmt.Println("Chunk saving error:", err)
+	}
+}
+
+//Rabindra Neupane
+// Chunk storage implementation: Nisham Karki. Error propagation: Rabindra Neupane.
+func (app *App) saveChunks(filePath string, chunks []Chunk) error {
 
 	// Get file name
 	fileName := filepath.Base(filePath)
@@ -35,7 +45,7 @@ func (app *App) SaveChunks(filePath string, chunks []Chunk) {
 			"Chunk folder creation error:",
 			folderCreationError,
 		)
-		return
+		return folderCreationError
 	}
 
 	// Process each chunk generated from the file
@@ -101,7 +111,7 @@ func (app *App) SaveChunks(filePath string, chunks []Chunk) {
 				"Chunk saving error:",
 				chunkSaveError,
 			)
-			return
+			return chunkSaveError
 		}
 
 	}
@@ -116,7 +126,7 @@ func (app *App) SaveChunks(filePath string, chunks []Chunk) {
 			"Chunk folder reading error:",
 			readDirectoryError,
 		)
-		return
+		return readDirectoryError
 	}
 
 	// Remove extra old chunks if the modified file became smaller
@@ -141,7 +151,7 @@ func (app *App) SaveChunks(filePath string, chunks []Chunk) {
 				"Old chunk removal error:",
 				removeChunkError,
 			)
-			return
+			return removeChunkError
 		}
 
 		fmt.Println(
@@ -149,4 +159,6 @@ func (app *App) SaveChunks(filePath string, chunks []Chunk) {
 			oldChunkFileName,
 		)
 	}
+	//Rabindra Neupane
+	return nil
 }

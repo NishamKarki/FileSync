@@ -4,7 +4,19 @@ package main
 
 import (
 	"database/sql"
+	"os"
 )
+
+//Rabindra Neupane
+// Implement Santosh's agreed disk-hash contract until his helper is available.
+// Missing files differ from empty files (whose SHA-256 is nonempty).
+func HashFileOnDisk(path string) (string, error) {
+	hash, err := hashStoredFile(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	return hash, err
+}
 
 // Returns the hash both devices last agreed on for this file.
 // Returns "" if the file has never been synced, or isn't in the database.

@@ -2,13 +2,18 @@
 package network
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
+	"strings"
+	"time"
 )
 
 // PingResponse represents the response from a ping request
@@ -16,10 +21,14 @@ type PingResponse struct {
 	Success    bool   `json:"success"`
 	Message    string `json:"message"`
 	DeviceName string `json:"deviceName"`
+	//Rabindra Neupane
+	DeviceID    string `json:"deviceId"`
+	Coordinator bool   `json:"coordinator"`
 }
 
 // pingHandler handles the /ping endpoint and responds with a PingResponse
-func pingHandler(responseWriter http.ResponseWriter, request *http.Request) {
+//Rabindra Neupane
+func pingHandler(responseWriter http.ResponseWriter, request *http.Request, registry *DeviceRegistry) {
 	responseWriter.Header().Set("Content-Type", "application/json")
 
 	// Get the hostname of the device running the server
@@ -33,145 +42,202 @@ func pingHandler(responseWriter http.ResponseWriter, request *http.Request) {
 		Message:    "FileSync Client is Online",
 		DeviceName: deviceName,
 	}
+	//Rabindra Neupane
+	if registry != nil {
+		status := registry.Status()
+		response.DeviceID, response.Coordinator = status.DeviceID, status.Coordinator
+	}
 	json.NewEncoder(responseWriter).Encode(response)
 }
 
-// fileHandler handels incomming file transfer requests and responds with a status code
-func fileHandler(responseWriter http.ResponseWriter, request *http.Request) {
-	fmt.Println("File transfer request received")
-	// Check if the request method is POST, otherwise return a "Method not allowed" error
-	if request.Method != http.MethodPost {
-		http.Error(responseWriter, "Only Post Requests are allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	// Read the uploaded file from the request
-	uploadedFile, uploadedFileHeader, fileReadError := request.FormFile("file")
-	if fileReadError != nil {
-		http.Error(responseWriter, "Failed to read uploaded file", http.StatusBadRequest)
-		return
-	}
-	defer uploadedFile.Close()
-	// Print the name of the received file to the console
-	fmt.Println("Received file:", uploadedFileHeader.Filename)
-
-	// Get the current working directory to save the uploaded file
-	projectDirectory, directoryLookupError := os.Getwd()
-	if directoryLookupError != nil {
-		http.Error(responseWriter, "Failed to get project directory", http.StatusInternalServerError)
-		return
-	}
-
-	// Create the path to the sync folder within the project directory
-	syncFolder := filepath.Join(projectDirectory, "Synced Files")
-
-	// Make sure the sync folder exists, create if it doesn't
-	syncFolderCreationError := os.MkdirAll(syncFolder, 0755)
-	if syncFolderCreationError != nil {
-		http.Error(responseWriter, "Failed to create sync folder", http.StatusInternalServerError)
-		return
-	}
-	// Create the destination file in the sync folder
-	destinationPath := filepath.Join(syncFolder, filepath.Base(uploadedFileHeader.Filename))
-	receivedFile, destinationFileCreationError := os.Create(destinationPath)
-	if destinationFileCreationError != nil {
-		http.Error(responseWriter, "Failed to create destination file", http.StatusInternalServerError)
-		return
-	}
-	defer receivedFile.Close()
-
-	// Copy the received file to the destination file
-	_, fileSaveError := io.Copy(receivedFile, uploadedFile)
-	if fileSaveError != nil {
-		http.Error(responseWriter, "Failed to save uploaded file", http.StatusInternalServerError)
-		return
-	}
-	fmt.Println("File successfully saved to:", destinationPath)
-	responseWriter.WriteHeader(http.StatusOK)
-}
-
-// StartServer starts the HTTP server on the specified port
-func StartServer(port string) {
+// StartServer uses the application's reconstruction method after chunk receipt.
+// The callback keeps reconstruction owned by the app without an import cycle.
+//Rabindra Neupane
+// Reconstruction implementation: Nisham Karki
+// Network integration: Rabindra Neupane
+func StartServer(ctx context.Context, port string, completeTransfer func(FileMetadata, string) error, registry *DeviceRegistry) {
 	// Create a new HTTP ServeMux to handle incoming ping requests
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", pingHandler)
+	//Rabindra Neupane
+	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) { pingHandler(w, r, registry) })
+	if registry != nil {
+		//Rabindra Neupane
+		mux.HandleFunc("/chunks/report", registry.reportChunks)
+		mux.HandleFunc("/chunks/locations", registry.locateChunk)
+		mux.Handle("/devices", registry.Handler())
+		mux.Handle("/devices/", registry.Handler())
+	}
 	// Create a new HTTP ServeMux to handle incoming file transfer requests
-	mux.HandleFunc("/file", fileHandler)
-	// Create a new HTTP ServeMux to handle incoming chunk transfer requests
-	mux.HandleFunc("/chunk", chunkHandler)
+	//Rabindra Neupane
+	// Whole-file route is attached after locating project storage below.
+	//Rabindra Neupane
+	// Verified chunk uploads use the isolated /transfer/ workflow.
+	// Compare metadata without writing chunks or replacing the destination file.
+	mux.HandleFunc("/file-metadata", fileMetadataHandler)
+	//Rabindra Neupane
+	projectDirectory, directoryError := os.Getwd()
+	if directoryError != nil {
+		fmt.Println("Cannot locate transfer storage:", directoryError)
+		return
+	}
+	mux.Handle("/file", NewWholeFileHandler(projectDirectory, completeTransfer))
+	mux.Handle("/transfer/", NewTransferHandler(projectDirectory, completeTransfer))
 
 	// Print server starting message to the console
 	fmt.Println("FileSync Network Server Starting...", port)
 	fmt.Println("Listening on port:", port)
 
-	err := http.ListenAndServe(":"+port, mux)
+	//Rabindra Neupane
+	server := &http.Server{Addr: ":" + port, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	serverDone := make(chan struct{})
+	defer close(serverDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-serverDone:
+			return
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.Shutdown(shutdownCtx)
+	}()
+	err := server.ListenAndServe()
 	// Check for error during server startup
-	if err != nil {
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Println("Network server error:", err)
 	}
 }
 
-func chunkHandler(responseWriter http.ResponseWriter, request *http.Request) {
-	fmt.Println("Chunk transfer request received")
-	// Check if the request method is POST, otherwise return a "Method not allowed" error
-	if request.Method != http.MethodPost {
-		http.Error(responseWriter, "Only Post Requests are allowed", http.StatusMethodNotAllowed)
+// fileMetadataHandler accepts the proposed file metadata and reports reusable local chunks.
+//Rabindra Neupane
+func fileMetadataHandler(w http.ResponseWriter, r *http.Request) {
+	projectDirectory, err := os.Getwd()
+	if err != nil {
+		http.Error(w, "Failed to locate chunk storage", http.StatusInternalServerError)
 		return
 	}
+	compareFileMetadata(w, r, projectDirectory)
+}
 
-	//
-	fileName := request.FormValue("fileName")
-	chunkIndexText := request.FormValue("chunkIndex")
-
-	if fileName == "" || chunkIndexText == "" {
-		http.Error(responseWriter, "Missing chunk metadata", http.StatusBadRequest)
+// compareFileMetadata takes an explicit storage root so tests never touch user files.
+//Rabindra Neupane
+func compareFileMetadata(w http.ResponseWriter, r *http.Request, projectDirectory string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "Only POST requests are allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	chunkIndex, chunkIndexConversionError := strconv.Atoi(chunkIndexText)
-	if chunkIndexConversionError != nil {
-		http.Error(responseWriter, "Invalid chunk index", http.StatusBadRequest)
+	// Bound metadata independently of the size of the file being synchronized.
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var metadata FileMetadata
+	if err := decoder.Decode(&metadata); err != nil {
+		http.Error(w, "Invalid file metadata", http.StatusBadRequest)
 		return
 	}
-
-	// Read the uploaded chunk from the request
-	uploadedChunk, _, chunkReadError := request.FormFile("Chunk")
-	if chunkReadError != nil {
-		http.Error(responseWriter, "Failed to read uploaded chunk", http.StatusBadRequest)
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		http.Error(w, "Expected one file metadata", http.StatusBadRequest)
 		return
 	}
-	defer uploadedChunk.Close()
-
-	// Get the current working directory to save the uploaded chunk
-	projectDirectoryPath, directoryLookupError := os.Getwd()
-	if directoryLookupError != nil {
-		http.Error(responseWriter, "Failed to get project directory", http.StatusInternalServerError)
+	if err := validateFileMetadata(metadata); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	// Construct the path to the folder where the chunk will be saved
-	chunkFolder := filepath.Join(projectDirectoryPath, "File Chunks", filepath.Base(fileName))
-	chunkFolderCreationError := os.MkdirAll(chunkFolder, 0755)
-	if chunkFolderCreationError != nil {
-		http.Error(responseWriter, "Failed to create chunk folder", http.StatusInternalServerError)
-		return
+	result := FileMetadataComparison{NeededChunks: make([]int, 0)}
+	for index, expectedHash := range metadata.ChunkHashes {
+		chunkPath := filepath.Join(projectDirectory, "File Chunks", metadata.FileName, fmt.Sprintf("chunk_%d.chunk", index))
+		chunk, err := os.Open(chunkPath)
+		if os.IsNotExist(err) {
+			result.NeededChunks = append(result.NeededChunks, index)
+			continue
+		}
+		if err != nil {
+			http.Error(w, "Failed to read stored chunk", http.StatusInternalServerError)
+			return
+		}
+		expectedSize := metadata.ChunkSize
+		if index == len(metadata.ChunkHashes)-1 {
+			expectedSize = metadata.FileSize - int64(index)*metadata.ChunkSize
+		}
+		hasher := sha256.New()
+		// Read at most the expected size plus one to detect oversized chunks.
+		// LimitReader avoids allocating a buffer proportional to an untrusted size.
+		reader := io.LimitReader(chunk, expectedSize)
+		size, readErr := io.Copy(hasher, reader)
+		var extra [1]byte
+		extraSize, extraErr := chunk.Read(extra[:])
+		closeErr := chunk.Close()
+		if readErr != nil || (extraErr != nil && extraErr != io.EOF) || closeErr != nil {
+			http.Error(w, "Failed to read stored chunk", http.StatusInternalServerError)
+			return
+		}
+		if size != expectedSize || extraSize != 0 || hex.EncodeToString(hasher.Sum(nil)) != expectedHash {
+			result.NeededChunks = append(result.NeededChunks, index)
+		}
 	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
 
-	// Construct the path for the chunk file within the chunk folder
-	chunkPath := filepath.Join(chunkFolder, fmt.Sprintf("chunk_%d.chunk", chunkIndex))
-	receivedChunkFile, chunkFileCreationError := os.Create(chunkPath)
-	if chunkFileCreationError != nil {
-		http.Error(responseWriter, "Failed to create chunk file", http.StatusInternalServerError)
-		return
+//Rabindra Neupane
+func validateFileMetadata(m FileMetadata) error {
+	// Current chunk storage is flat: IDs must match the relative file name.
+	// Reject path components on either Windows or Unix, regardless of host OS.
+	if m.FileName == "" || m.FileName == "." || m.FileName == ".." ||
+		strings.ContainsAny(m.FileName, "/\\:\x00") || m.FileID != m.FileName {
+		return fmt.Errorf("Invalid file identity: expected a plain file name and matching file ID")
 	}
-	defer receivedChunkFile.Close()
-
-	// Copy the uploaded chunk to the destination chunk file
-	_, chunkSaveError := io.Copy(receivedChunkFile, uploadedChunk)
-	if chunkSaveError != nil {
-		http.Error(responseWriter, "Failed to save uploaded chunk", http.StatusInternalServerError)
-		return
+	if m.Version < 1 || (m.BaseVersion != nil && (*m.BaseVersion < 1 || *m.BaseVersion >= m.Version)) {
+		return fmt.Errorf("Invalid version metadata")
 	}
-	fmt.Printf("Chunk %d of %s successfully received\n", chunkIndex, fileName)
-
-	responseWriter.WriteHeader(http.StatusOK)
+	if m.FileSize < 0 || m.ChunkSize <= 0 {
+		return fmt.Errorf("Invalid file or chunk size")
+	}
+	count := m.FileSize / m.ChunkSize
+	if m.FileSize%m.ChunkSize != 0 {
+		count++
+	}
+	if int64(len(m.ChunkHashes)) != count {
+		return fmt.Errorf("Chunk count does not match file size")
+	}
+	validHash := func(value string) bool {
+		decoded, err := hex.DecodeString(value)
+		return err == nil && len(decoded) == sha256.Size && value == strings.ToLower(value)
+	}
+	if !validHash(m.FileHash) {
+		return fmt.Errorf("Invalid file SHA-256 hash")
+	}
+	//Rabindra Neupane
+	if m.BaseHash != "" && !validHash(m.BaseHash) {
+		return fmt.Errorf("Invalid base SHA-256 hash")
+	}
+	deviceID, err := hex.DecodeString(m.DeviceID)
+	if err != nil || len(deviceID) != 16 || m.DeviceID != strings.ToLower(m.DeviceID) {
+		return fmt.Errorf("A persistent registered sender deviceId is required; update both peers")
+	}
+	for _, hash := range m.ChunkHashes {
+		if !validHash(hash) {
+			return fmt.Errorf("Invalid chunk SHA-256 hash")
+		}
+	}
+	//Rabindra Neupane
+	for _, hash := range m.BaseChunkHashes {
+		if !validHash(hash) {
+			return fmt.Errorf("Invalid base chunk SHA-256 hash")
+		}
+	}
+	//Rabindra Neupane
+	for _, identity := range m.BaseRevisions {
+		if !validHash(identity) {
+			return fmt.Errorf("Invalid base revision identity")
+		}
+	}
+	if m.FileSize == 0 {
+		emptyHash := sha256.Sum256(nil)
+		if m.FileHash != hex.EncodeToString(emptyHash[:]) {
+			return fmt.Errorf("Invalid empty file hash")
+		}
+	}
+	return nil
 }

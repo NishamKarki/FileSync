@@ -1,2 +1,0 @@
-// /Rabindra Neupane
-package network

@@ -8,43 +8,46 @@ import (
 
 // GetLocalIP retrieves the local IP address of the machine
 func GetLocalIP() (string, error) {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+	connection, connectionErr := net.Dial("udp", "8.8.8.8:80")
 	// Check for error during connection
-	if err != nil {
-		return "", err
+	if connectionErr != nil {
+		return "", connectionErr
 	}
-	defer conn.Close()
+	defer connection.Close()
 	// Get the local address from the connection
-	localAddress := conn.LocalAddr().(*net.UDPAddr)
-	// Print the local IP address to the console
-	fmt.Println("FileSync local IP address:", localAddress.IP.String())
+	localAddress := connection.LocalAddr().(*net.UDPAddr)
+	//Rabindra Neupane
+	// Return the address without printing on every heartbeat.
 	return localAddress.IP.String(), nil
 }
 
 // DiscoverDevices discovers devices on the local network
 func DiscoverDevices() []Device {
 	// Implementation for device discovery
-	localIP, err := GetLocalIP()
-	if err != nil {
-		fmt.Println("Could not get local IP address:", err)
+	localIP, localIPErr := GetLocalIP()
+	if localIPErr != nil {
+		fmt.Println("Could not get local IP address:", localIPErr)
 		return []Device{}
 	}
 	// Parse the local IP address to get the network prefix
-	ip := net.ParseIP(localIP).To4()
-	if ip == nil {
+	localIP4 := net.ParseIP(localIP).To4()
+	if localIP4 == nil {
 		fmt.Println("Could not parse local IPv4 address:", localIP)
 		return []Device{}
 	}
+
+	//Rabindra Neupane
+	// Scanning only discovers peers; coordinator heartbeats own registry status.
+
 	//channel to collect the results from the ping goroutines
 	results := make(chan Device, 254)
-
 	// Scan the local network for devices
 	for i := 1; i <= 254; i++ {
 		deviceIP := fmt.Sprintf(
 			"%d.%d.%d.%d",
-			ip[0],
-			ip[1],
-			ip[2],
+			localIP4[0],
+			localIP4[1],
+			localIP4[2],
 			i)
 
 		// Skip the local device itself
@@ -55,10 +58,13 @@ func DiscoverDevices() []Device {
 		go func(deviceIP string) {
 			// Ping the device at the specified port 8080
 			deviceAddress := deviceIP + ":8080"
-			response, err := PingDevice(deviceAddress)
+			response, pingErr := PingDevice(deviceAddress)
 			// Check if the ping was successful and the device is online
-			if err == nil && response.Success {
+			if pingErr == nil && response.Success {
 				device := Device{
+					//Rabindra Neupane
+					DeviceID:     response.DeviceID,
+					Coordinator:  response.Coordinator,
 					DeviceName:   response.DeviceName,
 					DeviceIP:     deviceIP,
 					DevicePort:   8080,
@@ -76,11 +82,12 @@ func DiscoverDevices() []Device {
 	// Collect the results from the goroutines
 	devices := make([]Device, 0)
 	// Wait for all goroutines to finish and collect the results
-	for i := 0; i < 253; i++ {
+	for index := 0; index < 253; index++ {
 		device := <-results
 		if device.DeviceIP != "" {
 			devices = append(devices, device)
 		}
 	}
+
 	return devices
 }
