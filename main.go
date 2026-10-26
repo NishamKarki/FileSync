@@ -1,15 +1,14 @@
 package main
 
 import (
-	"embed"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
 
-//go:embed all:frontend/dist
-var assets embed.FS
+var assets = os.DirFS("frontend/dist")
 
 func main() {
 	// Create an instance of the app structure
@@ -25,6 +24,8 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		OnStartup:        app.startup,
+		//Rabindra Neupane
+		OnShutdown: app.shutdown,
 		Bind: []interface{}{
 			app,
 		},
