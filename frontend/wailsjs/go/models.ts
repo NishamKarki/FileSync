@@ -35,6 +35,46 @@ export namespace main {
 	        this.Hash = source["Hash"];
 	    }
 	}
+	export class ConflictRecord {
+	    id: number;
+	    fileId: string;
+	    localHash: string;
+	    incomingHash: string;
+	    baseHash: string;
+	    senderDeviceId: string;
+	    conflictCopy: string;
+	    detectedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConflictRecord(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.fileId = source["fileId"];
+	        this.localHash = source["localHash"];
+	        this.incomingHash = source["incomingHash"];
+	        this.baseHash = source["baseHash"];
+	        this.senderDeviceId = source["senderDeviceId"];
+	        this.conflictCopy = source["conflictCopy"];
+	        this.detectedAt = source["detectedAt"];
+	    }
+	}
+	export class ConflictResolution {
+	    fileId: string;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConflictResolution(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.fileId = source["fileId"];
+	        this.message = source["message"];
+	    }
+	}
 	export class FileImportResult {
 	    names: string[];
 	    errors: string[];

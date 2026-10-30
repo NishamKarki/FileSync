@@ -22,6 +22,10 @@ export function FileWatcher(arg1) {
   return window['go']['main']['App']['FileWatcher'](arg1);
 }
 
+export function GetConflicts() {
+  return window['go']['main']['App']['GetConflicts']();
+}
+
 export function GetLocalIP() {
   return window['go']['main']['App']['GetLocalIP']();
 }
@@ -48,6 +52,10 @@ export function PingDevice(arg1) {
 
 export function ReconstructFile(arg1) {
   return window['go']['main']['App']['ReconstructFile'](arg1);
+}
+
+export function ResolveConflict(arg1, arg2) {
+  return window['go']['main']['App']['ResolveConflict'](arg1, arg2);
 }
 
 export function SaveChunks(arg1, arg2) {
