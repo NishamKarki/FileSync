@@ -116,6 +116,37 @@ func createTables(database *sql.DB) error {
 	if chunksTableCreationError != nil {
 		return chunksTableCreationError
 	}
+
+	// conflicts: every synchronization conflict detected on this device.
+	// Each row keeps the three hashes DetectConflict compared, which device
+	// sent the incoming version, and where its copy was saved.
+	// status stays "open" until the user chooses how to resolve it.
+	conflictsTable := `
+	CREATE TABLE IF NOT EXISTS conflicts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		file_id TEXT NOT NULL,
+		local_hash TEXT NOT NULL,
+		incoming_hash TEXT NOT NULL,
+		base_hash TEXT,
+		sender_device_id TEXT,
+		conflict_copy TEXT NOT NULL,
+		detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		status TEXT NOT NULL DEFAULT 'open',
+		resolution TEXT,
+		resolved_at DATETIME
+	);`
+
+	// Create the conflicts table.
+	conflictsTableCreationError :=
+		executeTableCreation(
+			database,
+			conflictsTable,
+		)
+
+	if conflictsTableCreationError != nil {
+		return conflictsTableCreationError
+	}
+
 	//Rabindra Neupane
 	// Device registration extends Santosh's metadata database without changing
 	// the existing files, file_versions, or chunks tables.
@@ -149,7 +180,7 @@ func executeTableCreation(
 }
 
 // Author: Santosh Tripathee. Integration: Rabindra Neupane.
-//Rabindra Neupane
+// Rabindra Neupane
 // Databases created before conflict detection are missing some newer columns.
 // CREATE TABLE IF NOT EXISTS skips tables that already exist, so it can't add
 // a new column to them. This checks whether the column is there and adds it
