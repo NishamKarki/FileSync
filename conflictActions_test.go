@@ -169,3 +169,67 @@ func TestConflictActionsRefuseBadInput(test *testing.T) {
 		test.Fatal("accepted a copy location outside Synced Files Conflict")
 	}
 }
+
+// The full path the conflict window uses: ResolveConflict carries out the
+// choice, saves the decision, and moves the base. A wrong choice or a
+// second click is refused.
+func TestResolveConflictFromScreen(test *testing.T) {
+	app, conflict, projectFolder := setupConflictFiles(test)
+	syncFolder := filepath.Join(projectFolder, "Synced Files")
+
+	// setupConflictFiles made the files; this adds a temporary database
+	testDatabase, setupError := InitDatabase(app.syncFolderPath)
+	if setupError != nil {
+		test.Fatal(setupError)
+	}
+	test.Cleanup(func() { testDatabase.Close() })
+	app.db = testDatabase
+
+	_, fileError := testDatabase.Exec(
+		"INSERT INTO files (id, path, name, last_synced_hash) VALUES ('notes.txt', 'notes.txt', 'notes.txt', 'oldBase')",
+	)
+	if fileError != nil {
+		test.Fatal(fileError)
+	}
+	if recordError := RecordConflict(testDatabase, conflict); recordError != nil {
+		test.Fatal(recordError)
+	}
+	openConflicts, _ := ListOpenConflicts(testDatabase)
+	conflictID := openConflicts[0].ID
+
+	// An unknown choice is refused, and the conflict stays open
+	if _, unknownChoiceError := app.ResolveConflict(conflictID, "delete-everything"); unknownChoiceError == nil {
+		test.Fatal("an unknown choice was accepted")
+	}
+	if openConflicts, _ = ListOpenConflicts(testDatabase); len(openConflicts) != 1 {
+		test.Fatal("the conflict was closed by an unknown choice")
+	}
+
+	// Keep both, as if the user clicked the button
+	resolution, resolveError := app.ResolveConflict(conflictID, KeepBothChoice)
+	if resolveError != nil {
+		test.Fatal(resolveError)
+	}
+	if resolution.FileID != "notes.txt" || !strings.Contains(resolution.Message, "notes (conflict copy).txt") {
+		test.Fatalf("unexpected result for the screen: %+v", resolution)
+	}
+	if text := readTestFile(filepath.Join(syncFolder, "notes (conflict copy).txt")); text != "hello A" {
+		test.Fatalf("the conflict copy has %q", text)
+	}
+
+	// The decision was saved and the base moved to the incoming version
+	if openConflicts, _ = ListOpenConflicts(testDatabase); len(openConflicts) != 0 {
+		test.Fatal("the conflict is still open after resolving")
+	}
+	if baseHash, _ := GetBaseHash(testDatabase, "notes.txt"); baseHash != conflict.IncomingHash {
+		test.Fatalf("base is %q, expected the incoming hash", baseHash)
+	}
+
+	// A second click is refused and makes no second copy
+	if _, secondClickError := app.ResolveConflict(conflictID, KeepBothChoice); secondClickError == nil {
+		test.Fatal("the same conflict was resolved twice")
+	}
+	if text := readTestFile(filepath.Join(syncFolder, "notes (conflict copy 2).txt")); text != "<missing>" {
+		test.Fatal("a second click made another copy")
+	}
+}
