@@ -20,21 +20,23 @@ type ConflictRecord struct {
 }
 
 // Saves a newly detected conflict so the user can be told about it.
-// If the same conflict is already open (same file, same two versions),
-// it is not saved again. This happens when a transfer is retried.
+// If this exact conflict (same file, same two versions) was recorded before,
+// it is not saved again, whether it is still open or already resolved:
+//   - still open: the user already knows about it (a transfer was retried)
+//   - resolved: the user already decided, so we don't ask again
 func RecordConflict(database *sql.DB, conflict ConflictRecord) error {
 
-	// Is this exact conflict already waiting for the user?
-	var openCount int
+	// Has this exact conflict been recorded before?
+	var existingCount int
 	checkError := database.QueryRow(
 		`SELECT COUNT(*) FROM conflicts
-		 WHERE file_id = ? AND local_hash = ? AND incoming_hash = ? AND status = 'open'`,
+		 WHERE file_id = ? AND local_hash = ? AND incoming_hash = ?`,
 		conflict.FileID, conflict.LocalHash, conflict.IncomingHash,
-	).Scan(&openCount)
+	).Scan(&existingCount)
 	if checkError != nil {
 		return checkError
 	}
-	if openCount > 0 {
+	if existingCount > 0 {
 		return nil
 	}
 

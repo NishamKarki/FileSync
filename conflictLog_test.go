@@ -63,4 +63,21 @@ func TestRecordAndListConflicts(test *testing.T) {
 	if len(conflicts) != 2 || conflicts[0].IncomingHash != "hashD" {
 		test.Fatalf("expected 2 conflicts with the newest first, got %+v", conflicts)
 	}
+
+	// Once the user has resolved a conflict, the same two versions arriving
+	// again are not recorded or shown again. (The resolve function comes in a
+	// later step, so the test marks it resolved directly in the database.)
+	_, resolveError := testDatabase.Exec(
+		"UPDATE conflicts SET status = 'resolved' WHERE incoming_hash = 'hashC'",
+	)
+	if resolveError != nil {
+		test.Fatal(resolveError)
+	}
+	if recordError := RecordConflict(testDatabase, firstConflict); recordError != nil {
+		test.Fatal(recordError)
+	}
+	conflicts, _ = ListOpenConflicts(testDatabase)
+	if len(conflicts) != 1 || conflicts[0].IncomingHash != "hashD" {
+		test.Fatalf("a resolved conflict came back: %+v", conflicts)
+	}
 }
