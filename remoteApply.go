@@ -94,7 +94,11 @@ func (a *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot str
 	case KeepLocal:
 		return &network.KeepLocalError{}
 	case Conflict:
-		return a.preserveIncomingConflict(metadata, verified)
+		//Santosh Tripathee
+		// Save the incoming copy (Rabindra), then record the conflict and notify the screen
+		preserveResult := a.preserveIncomingConflict(metadata, verified)
+		a.recordDetectedConflict(metadata, previousHash, preserveResult)
+		return preserveResult
 	case InSync, AcceptRemote:
 		// Verification succeeded; record content and shared base together below.
 	default:
