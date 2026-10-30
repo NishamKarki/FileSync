@@ -33,12 +33,11 @@ func InitDatabase(syncFolderPath string) (*sql.DB, error) {
 		return nil, tableError
 	}
 
-	//Rabindra Neupane
 	// Santosh Tripathee's conflict metadata migrations, integrated with the registry.
 	for _, column := range [][2]string{{"file_versions", "content_hash"}, {"files", "last_synced_hash"}} {
-		if err := addColumnIfMissing(database, column[0], column[1], "TEXT"); err != nil {
+		if metadataColumnMigrationError := addColumnIfMissing(database, column[0], column[1], "TEXT"); metadataColumnMigrationError != nil {
 			database.Close()
-			return nil, err
+			return nil, metadataColumnMigrationError
 		}
 	}
 	return database, nil
@@ -116,18 +115,17 @@ func createTables(database *sql.DB) error {
 	if chunksTableCreationError != nil {
 		return chunksTableCreationError
 	}
-	//Rabindra Neupane
 	// Device registration extends Santosh's metadata database without changing
 	// the existing files, file_versions, or chunks tables.
-	if err := executeTableCreation(database, `CREATE TABLE IF NOT EXISTS device_registry (
+	if deviceRegistryTableCreationError := executeTableCreation(database, `CREATE TABLE IF NOT EXISTS device_registry (
 		registration_key TEXT NOT NULL UNIQUE,
 		device_id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
 		ip TEXT NOT NULL,
 		port INTEGER NOT NULL,
 		last_seen INTEGER NOT NULL
-	)`); err != nil {
-		return err
+	)`); deviceRegistryTableCreationError != nil {
+		return deviceRegistryTableCreationError
 	}
 
 	return nil
@@ -149,7 +147,7 @@ func executeTableCreation(
 }
 
 // Author: Santosh Tripathee. Integration: Rabindra Neupane.
-//Rabindra Neupane
+// Rabindra Neupane
 // Databases created before conflict detection are missing some newer columns.
 // CREATE TABLE IF NOT EXISTS skips tables that already exist, so it can't add
 // a new column to them. This checks whether the column is there and adds it

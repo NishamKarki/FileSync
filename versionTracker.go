@@ -17,115 +17,113 @@ import (
 // If the file is new, its added to the files table with version 1.
 // If it already exists, a new version is recoreded, linked back to the version it came
 // from (this is what let us detect conflicts later).
-//Rabindra Neupane
+// Rabindra Neupane
 // Version management: Santosh Tripathee. Atomic recording and unchanged-content
 // deduplication: Rabindra Neupane. Watcher events alone do not create revisions.
 func RecordFileVersion(db *sql.DB, syncFolderPath, filePath, deviceID string, chunks []Chunk) error {
-	if err := waitForFileReady(filePath); err != nil {
-		return err
+	if fileReadyError := waitForFileReady(filePath); fileReadyError != nil {
+		return fileReadyError
 	}
-	relativePath, err := filepath.Rel(syncFolderPath, filePath)
-	if err != nil {
-		return err
+	relativePath, relativePathCalculationError := filepath.Rel(syncFolderPath, filePath)
+	if relativePathCalculationError != nil {
+		return relativePathCalculationError
 	}
-	info, err := os.Stat(filePath)
-	if err != nil {
-		return err
+	fileInformation, fileStatError := os.Stat(filePath)
+	if fileStatError != nil {
+		return fileStatError
 	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
+	databaseTransaction, transactionStartError := db.Begin()
+	if transactionStartError != nil {
+		return transactionStartError
 	}
-	defer tx.Rollback()
+	defer databaseTransaction.Rollback()
 	var current int
-	err = tx.QueryRow("SELECT current_version FROM files WHERE id = ?", relativePath).Scan(&current)
-	if err != nil && err != sql.ErrNoRows {
-		return err
+	currentVersionQueryError := databaseTransaction.QueryRow("SELECT current_version FROM files WHERE id = ?", relativePath).Scan(&current)
+	if currentVersionQueryError != nil && currentVersionQueryError != sql.ErrNoRows {
+		return currentVersionQueryError
 	}
-	known := err == nil
+	known := currentVersionQueryError == nil
 	if known {
 		var id int64
-		if err := tx.QueryRow("SELECT id FROM file_versions WHERE file_id = ? AND version_number = ? ORDER BY id DESC LIMIT 1", relativePath, current).Scan(&id); err != nil {
-			return err
+		if versionIDQueryError := databaseTransaction.QueryRow("SELECT id FROM file_versions WHERE file_id = ? AND version_number = ? ORDER BY id DESC LIMIT 1", relativePath, current).Scan(&id); versionIDQueryError != nil {
+			return versionIDQueryError
 		}
-		comparison := compareRecordedChunks(tx, id, chunks)
+		comparison := compareRecordedChunks(databaseTransaction, id, chunks)
 		if comparison == nil {
-			//Rabindra Neupane
 			// Backfill Santosh's whole-file hash for pre-migration versions.
-			if _, err := tx.Exec("UPDATE file_versions SET content_hash=? WHERE id=?", computeContentHash(chunks), id); err != nil {
-				return err
+			if _, contentHashUpdateError := databaseTransaction.Exec("UPDATE file_versions SET content_hash=? WHERE id=?", computeContentHash(chunks), id); contentHashUpdateError != nil {
+				return contentHashUpdateError
 			}
-			return tx.Commit()
+			return databaseTransaction.Commit()
 		}
 		if !errors.Is(comparison, errVersionChunksDiffer) {
 			return comparison
 		}
 	}
 	var maximum sql.NullInt64
-	if err := tx.QueryRow("SELECT MAX(version_number) FROM file_versions WHERE file_id = ?", relativePath).Scan(&maximum); err != nil {
-		return err
+	if maximumVersionQueryError := databaseTransaction.QueryRow("SELECT MAX(version_number) FROM file_versions WHERE file_id = ?", relativePath).Scan(&maximum); maximumVersionQueryError != nil {
+		return maximumVersionQueryError
 	}
 	next := current + 1
 	if maximum.Valid && int64(next) <= maximum.Int64 {
 		next = int(maximum.Int64) + 1
 	}
-	_, err = tx.Exec(`INSERT INTO files (id,path,name,current_version,size,modified_by)
+	_, fileRecordSavingError := databaseTransaction.Exec(`INSERT INTO files (id,path,name,current_version,size,modified_by)
         VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
         current_version=excluded.current_version,size=excluded.size,
-        modified_by=excluded.modified_by,updated_at=CURRENT_TIMESTAMP`, relativePath, relativePath, filepath.Base(filePath), next, info.Size(), deviceID)
-	if err != nil {
-		return err
+        modified_by=excluded.modified_by,updated_at=CURRENT_TIMESTAMP`, relativePath, relativePath, filepath.Base(filePath), next, fileInformation.Size(), deviceID)
+	if fileRecordSavingError != nil {
+		return fileRecordSavingError
 	}
 	var parent interface{}
 	if known {
 		parent = current
 	}
-	//Rabindra Neupane
 	// Santosh's content hash joins the existing atomic version/chunk transaction.
-	result, err := tx.Exec("INSERT INTO file_versions (file_id, version_number, based_on_version, device_id, content_hash) VALUES (?,?,?,?,?)", relativePath, next, parent, deviceID, computeContentHash(chunks))
-	if err != nil {
-		return err
+	versionInsertResult, versionSavingError := databaseTransaction.Exec("INSERT INTO file_versions (file_id, version_number, based_on_version, device_id, content_hash) VALUES (?,?,?,?,?)", relativePath, next, parent, deviceID, computeContentHash(chunks))
+	if versionSavingError != nil {
+		return versionSavingError
 	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return err
+	versionID, versionIDReadingError := versionInsertResult.LastInsertId()
+	if versionIDReadingError != nil {
+		return versionIDReadingError
 	}
 	for _, chunk := range chunks {
-		if _, err := tx.Exec("INSERT INTO chunks (file_version_id, chunk_index, chunk_hash) VALUES (?,?,?)", id, chunk.Index, chunk.Hash); err != nil {
-			return err
+		if _, chunkSavingError := databaseTransaction.Exec("INSERT INTO chunks (file_version_id, chunk_index, chunk_hash) VALUES (?,?,?)", versionID, chunk.Index, chunk.Hash); chunkSavingError != nil {
+			return chunkSavingError
 		}
 	}
-	return tx.Commit()
+	return databaseTransaction.Commit()
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // An empty result is a known empty base; missing history is an explicit error.
-func loadBaseChunkHashes(tx *sql.Tx, fileID string, version int) ([]string, error) {
+func loadBaseChunkHashes(databaseTransaction *sql.Tx, fileID string, version int) ([]string, error) {
 	var id int64
-	if err := tx.QueryRow("SELECT id FROM file_versions WHERE file_id = ? AND version_number = ? ORDER BY id DESC LIMIT 1", fileID, version).Scan(&id); err != nil {
-		return nil, err
+	if versionIDQueryError := databaseTransaction.QueryRow("SELECT id FROM file_versions WHERE file_id = ? AND version_number = ? ORDER BY id DESC LIMIT 1", fileID, version).Scan(&id); versionIDQueryError != nil {
+		return nil, versionIDQueryError
 	}
-	rows, err := tx.Query("SELECT chunk_index,chunk_hash FROM chunks WHERE file_version_id = ? ORDER BY chunk_index", id)
-	if err != nil {
-		return nil, err
+	chunkRows, chunkQueryError := databaseTransaction.Query("SELECT chunk_index,chunk_hash FROM chunks WHERE file_version_id = ? ORDER BY chunk_index", id)
+	if chunkQueryError != nil {
+		return nil, chunkQueryError
 	}
-	defer rows.Close()
+	defer chunkRows.Close()
 	hashes := make([]string, 0)
-	for rows.Next() {
+	for chunkRows.Next() {
 		var index int
 		var hash string
-		if err := rows.Scan(&index, &hash); err != nil {
-			return nil, err
+		if chunkScanningError := chunkRows.Scan(&index, &hash); chunkScanningError != nil {
+			return nil, chunkScanningError
 		}
 		if index != len(hashes) {
 			return nil, fmt.Errorf("base version chunk indexes are incomplete")
 		}
 		hashes = append(hashes, hash)
 	}
-	return hashes, rows.Err()
+	return hashes, chunkRows.Err()
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Length-prefixed fixed-size hash lists identify file contents independently of
 // local version counters. This is a revision identity, not the whole-file hash.
 func chunkRevisionIdentity(size int64, hashes []string) string {
@@ -137,18 +135,18 @@ func chunkRevisionIdentity(size int64, hashes []string) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-//Rabindra Neupane
-func loadBaseRevisionHistory(tx *sql.Tx, fileID string, version int) ([]string, error) {
+// Rabindra Neupane
+func loadBaseRevisionHistory(databaseTransaction *sql.Tx, fileID string, version int) ([]string, error) {
 	identities := make([]string, 0)
 	for version > 0 {
-		hashes, err := loadBaseChunkHashes(tx, fileID, version)
-		if err != nil {
-			return nil, err
+		hashes, baseChunkReadingError := loadBaseChunkHashes(databaseTransaction, fileID, version)
+		if baseChunkReadingError != nil {
+			return nil, baseChunkReadingError
 		}
 		identities = append(identities, chunkRevisionIdentity(chunkSize, hashes))
 		var parent sql.NullInt64
-		if err := tx.QueryRow("SELECT based_on_version FROM file_versions WHERE file_id=? AND version_number=? ORDER BY id DESC LIMIT 1", fileID, version).Scan(&parent); err != nil {
-			return nil, err
+		if parentVersionQueryError := databaseTransaction.QueryRow("SELECT based_on_version FROM file_versions WHERE file_id=? AND version_number=? ORDER BY id DESC LIMIT 1", fileID, version).Scan(&parent); parentVersionQueryError != nil {
+			return nil, parentVersionQueryError
 		}
 		if !parent.Valid {
 			break
@@ -168,12 +166,12 @@ func waitForFileReady(filePath string) error {
 	var lastError error
 
 	for attempt := 0; attempt < 5; attempt++ {
-		file, err := os.Open(filePath)
-		if err == nil {
+		file, fileOpeningError := os.Open(filePath)
+		if fileOpeningError == nil {
 			file.Close()
 			return nil
 		}
-		lastError = err
+		lastError = fileOpeningError
 		time.Sleep(300 * time.Millisecond)
 	}
 
@@ -181,7 +179,7 @@ func waitForFileReady(filePath string) error {
 }
 
 // Author: Santosh Tripathee. Integration: Rabindra Neupane.
-//Rabindra Neupane
+// Rabindra Neupane
 // Calculates one SHA-256 hash for the whole file from its chunks.
 // The chunks are fed in order, so the result is the same as hashing the
 // complete file at once. The same content always gives the same hash, on any

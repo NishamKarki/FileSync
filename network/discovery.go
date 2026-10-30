@@ -1,4 +1,3 @@
-// /Rabindra Neupane
 package network
 
 import (
@@ -8,15 +7,14 @@ import (
 
 // GetLocalIP retrieves the local IP address of the machine
 func GetLocalIP() (string, error) {
-	connection, connectionErr := net.Dial("udp", "8.8.8.8:80")
+	connection, networkDialError := net.Dial("udp", "8.8.8.8:80")
 	// Check for error during connection
-	if connectionErr != nil {
-		return "", connectionErr
+	if networkDialError != nil {
+		return "", networkDialError
 	}
 	defer connection.Close()
 	// Get the local address from the connection
 	localAddress := connection.LocalAddr().(*net.UDPAddr)
-	//Rabindra Neupane
 	// Return the address without printing on every heartbeat.
 	return localAddress.IP.String(), nil
 }
@@ -24,9 +22,9 @@ func GetLocalIP() (string, error) {
 // DiscoverDevices discovers devices on the local network
 func DiscoverDevices() []Device {
 	// Implementation for device discovery
-	localIP, localIPErr := GetLocalIP()
-	if localIPErr != nil {
-		fmt.Println("Could not get local IP address:", localIPErr)
+	localIP, localIPLookupError := GetLocalIP()
+	if localIPLookupError != nil {
+		fmt.Println("Could not get local IP address:", localIPLookupError)
 		return []Device{}
 	}
 	// Parse the local IP address to get the network prefix
@@ -36,7 +34,6 @@ func DiscoverDevices() []Device {
 		return []Device{}
 	}
 
-	//Rabindra Neupane
 	// Scanning only discovers peers; coordinator heartbeats own registry status.
 
 	//channel to collect the results from the ping goroutines
@@ -58,11 +55,10 @@ func DiscoverDevices() []Device {
 		go func(deviceIP string) {
 			// Ping the device at the specified port 8080
 			deviceAddress := deviceIP + ":8080"
-			response, pingErr := PingDevice(deviceAddress)
+			response, devicePingError := PingDevice(deviceAddress)
 			// Check if the ping was successful and the device is online
-			if pingErr == nil && response.Success {
+			if devicePingError == nil && response.Success {
 				device := Device{
-					//Rabindra Neupane
 					DeviceID:     response.DeviceID,
 					Coordinator:  response.Coordinator,
 					DeviceName:   response.DeviceName,

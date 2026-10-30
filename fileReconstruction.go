@@ -189,7 +189,6 @@ func (app *App) reconstructStoredFile(fileName string, metadata *network.FileMet
 	// If no chunks exist, check whether the original file is actually empty.
 	// An empty file correctly produces zero chunks, so FileSync should
 	// reconstruct it as an empty file instead of treating it as an error.
-	//Rabindra Neupane
 	if metadata != nil && len(storedChunks) != len(metadata.ChunkHashes) {
 		return fmt.Errorf("stored chunk count does not match transfer metadata")
 	}
@@ -261,7 +260,6 @@ func (app *App) reconstructStoredFile(fileName string, metadata *network.FileMet
 		},
 	)
 
-	//Rabindra Neupane
 	// Create temporary output in the configured folder outside Synced Files.
 	temporaryFile, temporaryFileCreationError :=
 		os.CreateTemp(
@@ -348,21 +346,20 @@ func (app *App) reconstructStoredFile(fileName string, metadata *network.FileMet
 		return temporaryFileCloseError
 	}
 
-	//Rabindra Neupane
 	// Verify the temporary output before touching an existing reconstructed file.
 	if metadata != nil {
-		output, err := os.Open(temporaryFilePath)
-		if err != nil {
-			return err
+		output, reconstructedFileOpeningError := os.Open(temporaryFilePath)
+		if reconstructedFileOpeningError != nil {
+			return reconstructedFileOpeningError
 		}
 		hasher := sha256.New()
-		size, readError := io.Copy(hasher, output)
-		closeError := output.Close()
-		if readError != nil {
-			return readError
+		size, reconstructedFileReadingError := io.Copy(hasher, output)
+		reconstructedFileClosingError := output.Close()
+		if reconstructedFileReadingError != nil {
+			return reconstructedFileReadingError
 		}
-		if closeError != nil {
-			return closeError
+		if reconstructedFileClosingError != nil {
+			return reconstructedFileClosingError
 		}
 		if size != metadata.FileSize || hex.EncodeToString(hasher.Sum(nil)) != metadata.FileHash {
 			return fmt.Errorf("reconstructed file failed size or SHA-256 verification")
@@ -375,11 +372,10 @@ func (app *App) reconstructStoredFile(fileName string, metadata *network.FileMet
 		fileName,
 	)
 
-	//Rabindra Neupane
 	// Reconstruction implementation: Nisham Karki
 	// Replace without deleting the previous output first.
-	if err := replaceVerifiedFile(temporaryFilePath, destinationFilePath); err != nil {
-		return fmt.Errorf("failed to replace reconstructed file: %w", err)
+	if reconstructedFileReplacementError := replaceVerifiedFile(temporaryFilePath, destinationFilePath); reconstructedFileReplacementError != nil {
+		return fmt.Errorf("failed to replace reconstructed file: %w", reconstructedFileReplacementError)
 	}
 	fmt.Println(
 		"FILE RECONSTRUCTED:",
@@ -393,15 +389,15 @@ func (app *App) reconstructStoredFile(fileName string, metadata *network.FileMet
 // Go's Windows rename uses MOVEFILE_REPLACE_EXISTING. A failed rename leaves
 // the original destination in place; retry temporary locks without deleting it.
 func replaceVerifiedFile(source, destination string) error {
-	var err error
+	var fileRenameError error
 	for attempt := 0; attempt < 5; attempt++ {
-		err = os.Rename(source, destination)
-		if err == nil {
+		fileRenameError = os.Rename(source, destination)
+		if fileRenameError == nil {
 			return nil
 		}
 		if attempt < 4 {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
-	return err
+	return fileRenameError
 }

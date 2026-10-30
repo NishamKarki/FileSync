@@ -13,15 +13,15 @@ import (
 // in local "File Chunks" directory
 // Each synchronized files get their own chunk folder
 // If modified files become smaller, and produce less chunks, old chunks are removed
-//Rabindra Neupane
+// Rabindra Neupane
 // Preserve Nisham Karki's public method while internal callers receive failures.
 func (app *App) SaveChunks(filePath string, chunks []Chunk) {
-	if err := app.saveChunks(filePath, chunks); err != nil {
-		fmt.Println("Chunk saving error:", err)
+	if chunkSavingError := app.saveChunks(filePath, chunks); chunkSavingError != nil {
+		fmt.Println("Chunk saving error:", chunkSavingError)
 	}
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Chunk storage implementation: Nisham Karki. Error propagation: Rabindra Neupane.
 func (app *App) saveChunks(filePath string, chunks []Chunk) error {
 
@@ -35,17 +35,17 @@ func (app *App) saveChunks(filePath string, chunks []Chunk) error {
 	)
 
 	// Create chunk folder, if it does not exist
-	folderCreationError := os.MkdirAll(
+	chunkFolderCreationError := os.MkdirAll(
 		fileChunkFolder,
 		0755,
 	)
 
-	if folderCreationError != nil {
+	if chunkFolderCreationError != nil {
 		fmt.Println(
 			"Chunk folder creation error:",
-			folderCreationError,
+			chunkFolderCreationError,
 		)
-		return folderCreationError
+		return chunkFolderCreationError
 	}
 
 	// Process each chunk generated from the file
@@ -67,11 +67,11 @@ func (app *App) saveChunks(filePath string, chunks []Chunk) error {
 		)
 
 		// Read an existing version of the chunk for the lcoal storage
-		existingChunkData, chunkReadError :=
+		existingChunkData, existingChunkReadingError :=
 			os.ReadFile(chunkFilePath)
 
 		// Compare hash value with the new chunk, if the chunk already exists
-		if chunkReadError == nil {
+		if existingChunkReadingError == nil {
 
 			// Generate SHA-256 hash for the existing stored chunk
 			existingChunkHash :=
@@ -100,33 +100,33 @@ func (app *App) saveChunks(filePath string, chunks []Chunk) error {
 		}
 
 		// Save chunk if it is new or has changed
-		chunkSaveError := os.WriteFile(
+		chunkSavingError := os.WriteFile(
 			chunkFilePath,
 			chunk.Data,
 			0644,
 		)
 
-		if chunkSaveError != nil {
+		if chunkSavingError != nil {
 			fmt.Println(
 				"Chunk saving error:",
-				chunkSaveError,
+				chunkSavingError,
 			)
-			return chunkSaveError
+			return chunkSavingError
 		}
 
 	}
 
 	// Read the chunk folder to check if the old chunks remain after a files
 	// becomes smaller due to modification
-	existingChunkFiles, readDirectoryError :=
+	existingChunkFiles, chunkDirectoryReadingError :=
 		os.ReadDir(fileChunkFolder)
 
-	if readDirectoryError != nil {
+	if chunkDirectoryReadingError != nil {
 		fmt.Println(
 			"Chunk folder reading error:",
-			readDirectoryError,
+			chunkDirectoryReadingError,
 		)
-		return readDirectoryError
+		return chunkDirectoryReadingError
 	}
 
 	// Remove extra old chunks if the modified file became smaller
@@ -142,16 +142,16 @@ func (app *App) saveChunks(filePath string, chunks []Chunk) error {
 			oldChunkFileName,
 		)
 
-		removeChunkError := os.Remove(
+		oldChunkRemovalError := os.Remove(
 			oldChunkFilePath,
 		)
 
-		if removeChunkError != nil {
+		if oldChunkRemovalError != nil {
 			fmt.Println(
 				"Old chunk removal error:",
-				removeChunkError,
+				oldChunkRemovalError,
 			)
-			return removeChunkError
+			return oldChunkRemovalError
 		}
 
 		fmt.Println(
@@ -159,6 +159,5 @@ func (app *App) saveChunks(filePath string, chunks []Chunk) error {
 			oldChunkFileName,
 		)
 	}
-	//Rabindra Neupane
 	return nil
 }
