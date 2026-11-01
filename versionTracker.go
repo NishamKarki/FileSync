@@ -21,6 +21,7 @@ import (
 // Version management: Santosh Tripathee. Atomic recording and unchanged-content
 // deduplication: Rabindra Neupane. Watcher events alone do not create revisions.
 func RecordFileVersion(db *sql.DB, syncFolderPath, filePath, deviceID string, chunks []Chunk) error {
+	// Wait for applications such as Word to finish writing the file.
 	if fileReadyError := waitForFileReady(filePath); fileReadyError != nil {
 		return fileReadyError
 	}
@@ -97,8 +98,10 @@ func RecordFileVersion(db *sql.DB, syncFolderPath, filePath, deviceID string, ch
 }
 
 // Rabindra Neupane
-// An empty result is a known empty base; missing history is an explicit error.
+// loadBaseChunkHashes returns ordered hashes for one recorded base version.
+// An empty result is a known empty file, while missing history is an error.
 func loadBaseChunkHashes(databaseTransaction *sql.Tx, fileID string, version int) ([]string, error) {
+	// Query the database row that identifies the requested file version.
 	var id int64
 	if versionIDQueryError := databaseTransaction.QueryRow("SELECT id FROM file_versions WHERE file_id = ? AND version_number = ? ORDER BY id DESC LIMIT 1", fileID, version).Scan(&id); versionIDQueryError != nil {
 		return nil, versionIDQueryError
@@ -127,6 +130,7 @@ func loadBaseChunkHashes(databaseTransaction *sql.Tx, fileID string, version int
 // Length-prefixed fixed-size hash lists identify file contents independently of
 // local version counters. This is a revision identity, not the whole-file hash.
 func chunkRevisionIdentity(size int64, hashes []string) string {
+	// Create a hash containing chunk size and count to avoid ambiguous lists.
 	hasher := sha256.New()
 	fmt.Fprintf(hasher, "%d:%d:", size, len(hashes))
 	for _, hash := range hashes {
@@ -136,7 +140,9 @@ func chunkRevisionIdentity(size int64, hashes []string) string {
 }
 
 // Rabindra Neupane
+// loadBaseRevisionHistory follows parent versions and returns their content identities.
 func loadBaseRevisionHistory(databaseTransaction *sql.Tx, fileID string, version int) ([]string, error) {
+	// Create an ordered list starting with the newest shared base.
 	identities := make([]string, 0)
 	for version > 0 {
 		hashes, baseChunkReadingError := loadBaseChunkHashes(databaseTransaction, fileID, version)
@@ -163,29 +169,36 @@ func loadBaseRevisionHistory(databaseTransaction *sql.Tx, fileID string, version
 // while writing it. Instead of failing immediately, wait a moment and retry
 // a few times before giving up.
 func waitForFileReady(filePath string) error {
+	// Keep the last opening error so it can be returned after all retries fail.
 	var lastError error
 
+	// Retry briefly because another program may release the file after finishing a write.
 	for attempt := 0; attempt < 5; attempt++ {
+		// Open the file to check whether it is ready to be read.
 		file, fileOpeningError := os.Open(filePath)
+		// Return as soon as the file can be opened successfully.
 		if fileOpeningError == nil {
 			file.Close()
 			return nil
 		}
+		// Save the error and wait before trying again.
 		lastError = fileOpeningError
 		time.Sleep(300 * time.Millisecond)
 	}
 
+	// Return the final error after every retry has failed.
 	return lastError
 }
 
 // Author: Santosh Tripathee. Integration: Rabindra Neupane.
 // Rabindra Neupane
-// Calculates one SHA-256 hash for the whole file from its chunks.
+// computeContentHash calculates one SHA-256 hash for the whole file from its chunks.
 // The chunks are fed in order, so the result is the same as hashing the
 // complete file at once. The same content always gives the same hash, on any
 // device and with any chunk size. Conflict detection compares these hashes
 // instead of version numbers, because each device counts its own versions.
 func computeContentHash(chunks []Chunk) string {
+	// Create one hasher for the complete ordered file contents.
 	contentHasher := sha256.New()
 
 	// ChunkFile returns the chunks in order (index 0, 1, 2, ...)

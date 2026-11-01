@@ -1,4 +1,6 @@
 
+// Author: Rabindra Neupane
+
 import {
     AddFiles,
     ListSyncedFiles,
@@ -103,9 +105,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     </div>
 `
-///Rabindra Neupane
-// Test the GetLocalIP function and log the result
+// Rabindra Neupane
+// testLocalIP reads the local network address for development diagnostics.
 async function testLocalIP() {
+    // Read and log the address used by the local FileSync server.
     try {
         const localIP = await GetLocalIP();
         console.log("FileSync local IP address:");
@@ -117,9 +120,10 @@ async function testLocalIP() {
 }
 testLocalIP();
 
-//Rabindra Neupane
-// Discovery is used only to choose a coordinator during setup.
+// Rabindra Neupane
+// findCoordinator scans only when the user needs to choose a coordinator.
 async function findCoordinator() {
+    // Stop when a coordinator scan is already running.
     if (coordinatorSearchRunning) return;
     coordinatorSearchRunning = true;
     showingDiscovery = true;
@@ -138,25 +142,26 @@ async function findCoordinator() {
         if (button) button.disabled = false;
     }
 }
-//Rabindra Neupane
+// Rabindra Neupane
  document.getElementById('find-coordinator-button')?.addEventListener('click', () => { void findCoordinator(); });
-/// Selected device information
+// Save the selected device used by synchronization controls.
 let selectedDeviceAddress: string | null = null;
-//Rabindra Neupane
 let selectedDeviceID: string | null = null;
 let showingDiscovery = false;
-//Rabindra Neupane
 let coordinatorSearchRunning = false;
 let registrationRefreshRunning = false;
 let registrationSettingsLoaded = false;
 let registrationSettingsEdited = false;
 let ownDeviceID = '';
 
-//Rabindra Neupane
+// Rabindra Neupane
+// ListedDevice describes the coordinator data displayed in the frontend.
 type ListedDevice = { id: string; name: string; ip: string; port: number; online: boolean; lastSeen?: string; coordinator?: boolean };
 
-//Rabindra Neupane
+// Rabindra Neupane
+// renderDevices lists online devices first and keeps offline records visible.
 function renderDevices(devices: ListedDevice[]) {
+    // Read the container used for coordinator discovery and registered devices.
     const container = document.getElementById('connected-devices');
     if (!container) return;
     const previousAddress = selectedDeviceAddress;
@@ -218,9 +223,9 @@ function renderDevices(devices: ListedDevice[]) {
 }
 
 // Rabindra Neupane
-// Adds consistently aligned label and value rows without treating device data
-// as HTML.
+// appendDetailRows adds aligned labels and values without treating device data as HTML.
 function appendDetailRows(container: HTMLElement, details: string[][]) {
+    // Clear older values before adding the latest details.
     container.replaceChildren();
 
     for (const [detailLabel, detailValue] of details) {
@@ -241,12 +246,12 @@ function appendDetailRows(container: HTMLElement, details: string[][]) {
 }
 
 // Rabindra Neupane
-// Shows coordinator details as labeled rows so long IDs remain easy to match
-// with the correct device information.
+// renderRegistrationStatus shows coordinator details and keeps long IDs readable.
 function renderRegistrationStatus(
     container: HTMLElement,
     status: Awaited<ReturnType<typeof GetRegistrationStatus>>
 ) {
+    // Show setup guidance until a coordinator choice is configured.
     if (!status.configured) {
         container.classList.remove('registration-details');
         container.textContent = 'Choose this computer as coordinator, or enter the coordinator address.';
@@ -269,7 +274,9 @@ function renderRegistrationStatus(
 }
 
 // Rabindra Neupane
+// refreshRegistration reads status and devices without overlapping requests.
 async function refreshRegistration() {
+    // Stop when the previous registration refresh is still running.
     if (registrationRefreshRunning) return;
     registrationRefreshRunning = true;
     const label = document.getElementById('registration-status');
@@ -331,16 +338,18 @@ document.getElementById('registered-devices-button')?.addEventListener('click', 
     void refreshRegistration();
 });
 
-// Selected file information
-//Rabindra Neupane
+// Rabindra Neupane
+// Save the file names selected from the current Synced Files list.
 const selectedFileNames = new Set<string>();
 let selectionSource = 'Synced Files';
 // Use to populate "Recent activity" section with recently modified files
 const recentFileActivity = document.getElementById('recent-activity')
 
-//Rabindra Neupane
+// Rabindra Neupane
 let transferInProgress = false;
+// setTransferBusy disables transfer controls while one batch is running.
 function setTransferBusy(busy: boolean) {
+    // Save the shared busy state used by transfer controls.
     transferInProgress = busy;
     for (const id of ['sync-now-button', 'send-whole-file-button']) {
         const button = document.querySelector<HTMLButtonElement>(`#${id}`);
@@ -349,10 +358,12 @@ function setTransferBusy(busy: boolean) {
 }
 
 //Rabindra Neupane
-// Process a fixed selection sequentially; each file retains independent results.
+// Rabindra Neupane
+// transferSelectedFiles processes a fixed selection in order and reports each result.
 const syncNowButton = document.querySelector<HTMLButtonElement>('#sync-now-button');
 const wholeFileButton = document.querySelector<HTMLButtonElement>('#send-whole-file-button');
 async function transferSelectedFiles(wholeFile: boolean) {
+    // Stop duplicate clicks and require both a peer and selected files.
     if (transferInProgress) return;
     if (selectedFileNames.size === 0 || !selectedDeviceAddress) {
         if (recentFileActivity) recentFileActivity.textContent = 'Please select files and a device first.';
@@ -392,14 +403,15 @@ async function transferSelectedFiles(wholeFile: boolean) {
 }
 syncNowButton?.addEventListener('click', () => { void transferSelectedFiles(false); });
 wholeFileButton?.addEventListener('click', () => { void transferSelectedFiles(true); });
-//Rabindra Neupane
+// Rabindra Neupane
 // File picker implementation: Nisham Karki. Working-folder selection: Rabindra Neupane.
 const selectFileButton = document.querySelector<HTMLButtonElement>('#select-file-button');
 let fileListRefreshing = false;
 let fileListSignature = '';
-//Rabindra Neupane
-// Measure five real rows so wrapped names and window resizing stay within the limit.
+// Rabindra Neupane
+// sizeFileList measures five rows so longer lists scroll inside the table.
 function sizeFileList() {
+    // Read the scroll area, table body, and current rows.
     const viewport = document.querySelector<HTMLElement>('.file-table-scroll');
     const table = document.querySelector<HTMLTableElement>('.file-table');
     if (!viewport || !table) return;
@@ -416,8 +428,10 @@ if (fileTable) fileTableObserver.observe(fileTable);
 window.addEventListener('beforeunload', () => fileTableObserver.disconnect());
 
 
-//Rabindra Neupane
+// Rabindra Neupane
+// updateFileSelection removes selections that are no longer present.
 function updateFileSelection() {
+    // Read the label that summarizes the current selection.
     const label = document.getElementById('selected-files');
     if (label) label.textContent = selectedFileNames.size
         ? `${selectionSource} (${selectedFileNames.size} selected): ${[...selectedFileNames].join(', ')}`
@@ -427,8 +441,10 @@ function updateFileSelection() {
         input.closest('tr')?.classList.toggle('selected-file', input.checked);
     });
 }
-//Rabindra Neupane
+// Rabindra Neupane
+// refreshSyncedFiles reads the working folder and redraws only when data changes.
 async function refreshSyncedFiles() {
+    // Stop when a previous folder refresh is still running.
     if (fileListRefreshing) return;
     fileListRefreshing = true;
     const status = document.getElementById('file-list-status');
@@ -523,7 +539,7 @@ EventsOn('file-change', (modifiedFile: string) => {
     }
 })
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Poll registration separately from explicit subnet scans; avoid overlapping requests.
 void refreshRegistration();
 const registrationRefreshTimer = window.setInterval(() => { void refreshRegistration(); }, 5000);

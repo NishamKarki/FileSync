@@ -171,6 +171,7 @@ func executeTableCreation(
 
 // Author: Santosh Tripathee. Integration: Rabindra Neupane.
 // Rabindra Neupane
+// addColumnIfMissing upgrades an existing table without changing saved rows.
 // Databases created before conflict detection are missing some newer columns.
 // CREATE TABLE IF NOT EXISTS skips tables that already exist, so it can't add
 // a new column to them. This checks whether the column is there and adds it

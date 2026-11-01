@@ -15,51 +15,71 @@ import (
 )
 
 // Rabindra Neupane
+// hashStoredFile reads a complete file and returns its SHA-256 hash.
 func hashStoredFile(path string) (string, error) {
+	// Open the stored file for streaming hash calculation.
 	file, fileOpeningError := os.Open(path)
 	if fileOpeningError != nil {
 		return "", fileOpeningError
 	}
+	// Close the file after hashing finishes.
 	defer file.Close()
+	// Create a SHA-256 hasher for the complete file.
 	hasher := sha256.New()
+	// Stream the file contents through the hasher.
 	if _, fileHashingError := io.Copy(hasher, file); fileHashingError != nil {
 		return "", fileHashingError
 	}
+	// Return the complete hash as lowercase hexadecimal text.
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 // Rabindra Neupane
+// matchesRemoteFile identifies watcher events caused by an accepted remote update.
 // Caller holds fileProcessingMutex. Keep the marker while contents match so
 // delayed/duplicate watcher events are ignored. A real edit removes the marker.
 func (app *App) matchesRemoteFile(path string) bool {
+	// Normalize the path before looking up its accepted remote hash.
 	path = filepath.Clean(path)
+	// Read the marker created when a remote version was installed.
 	expected, exists := app.remoteFileHashes[path]
+	// Continue only when this path has an accepted remote hash marker.
 	if !exists {
 		return false
 	}
+	// Hash the current disk contents before suppressing the watcher event.
 	actualHash, fileHashingError := hashStoredFile(path)
+	// Remove a stale marker when the file is missing or cannot be read.
 	if fileHashingError != nil {
+		// Delete the marker when the remote file no longer exists.
 		if os.IsNotExist(fileHashingError) {
 			delete(app.remoteFileHashes, path)
 		}
 		return false
 	}
+	// Keep the marker while the file still matches the accepted remote version.
 	if actualHash == expected {
 		return true
 	}
+	// Remove the marker because the file was edited locally.
 	delete(app.remoteFileHashes, path)
+	// Allow the watcher to process the real local edit.
 	return false
 }
 
 // Rabindra Neupane
 // Reconstruction: Nisham Karki. Version schema: Santosh Tripathee.
 // Remote application and watcher coordination: Rabindra Neupane.
+// applyIncomingTransfer verifies, decides, and safely installs one received version.
 func (app *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot string) error {
+	// Lock file application so watcher and transfer work cannot overlap.
 	app.fileProcessingMutex.Lock()
 	defer app.fileProcessingMutex.Unlock()
+	// Require both working-file and metadata storage before receiving a file.
 	if app.db == nil || app.syncFolderPath == "" {
 		return fmt.Errorf("receiver storage or metadata database is unavailable")
 	}
+	// Validate the incoming flat file identity and positive version.
 	if metadata.FileID != metadata.FileName || metadata.FileName == "" || filepath.Base(metadata.FileName) != metadata.FileName || metadata.Version < 1 {
 		return fmt.Errorf("invalid received file identity or version")
 	}
@@ -68,17 +88,21 @@ func (app *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot s
 	if outputDirectoryCreationError != nil {
 		return outputDirectoryCreationError
 	}
+	// Remove temporary reconstruction files unless recovery must retain them.
 	cleanupOutput := true
 	defer func() {
 		if cleanupOutput {
 			os.RemoveAll(outputRoot)
 		}
 	}()
+	// Reconstruct the incoming chunks with the existing reconstruction component.
 	transferApp := &App{chunkStoragePath: chunkRoot, reconstructedFilesPath: outputRoot}
 	if reconstructionError := transferApp.reconstructStoredFile(metadata.FileName, &metadata); reconstructionError != nil {
 		return reconstructionError
 	}
+	// Build the verified output and final Synced Files paths.
 	verified := filepath.Join(outputRoot, metadata.FileName)
+	// Ensure the destination folder exists before conflict handling.
 	if syncFolderCreationError := os.MkdirAll(app.syncFolderPath, 0755); syncFolderCreationError != nil {
 		return syncFolderCreationError
 	}
@@ -89,6 +113,7 @@ func (app *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot s
 		return destinationHashingError
 	}
 	hadPrevious := previousHash != ""
+	// Choose whether to keep local data, preserve a conflict, or accept remote data.
 	switch DetectConflict(metadata.BaseHash, previousHash, metadata.FileHash) {
 	case KeepLocal:
 		return &network.KeepLocalError{}
@@ -109,16 +134,20 @@ func (app *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot s
 		return backupDirectoryCreationError
 	}
 	backup := filepath.Join(backupRoot, "previous-file")
+	// Copy the current file into rollback storage when it already exists.
 	if hadPrevious {
 		if backupCopyingError := copyRemoteBackup(destination, backup); backupCopyingError != nil {
 			return backupCopyingError
 		}
 	}
+	// Start one transaction for the received version and shared-base update.
 	databaseTransaction, transactionStartError := app.db.Begin()
 	if transactionStartError != nil {
 		return transactionStartError
 	}
+	// Roll back uncommitted metadata when any later step fails.
 	defer databaseTransaction.Rollback()
+	// Record the verified incoming version before replacing the disk file.
 	if versionRecordingError := app.recordReceivedVersion(databaseTransaction, metadata); versionRecordingError != nil {
 		return versionRecordingError
 	}
@@ -127,9 +156,11 @@ func (app *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot s
 	if (hadPrevious && (destinationRecheckHashingError != nil || currentHash != previousHash)) || (!hadPrevious && !os.IsNotExist(destinationRecheckHashingError)) {
 		return fmt.Errorf("destination changed during transfer; retry after local processing")
 	}
+	// Replace the working file with the verified reconstructed output.
 	if fileReplacementError := replaceVerifiedFile(verified, destination); fileReplacementError != nil {
 		return fileReplacementError
 	}
+	// Commit metadata only after the disk replacement succeeds.
 	if transactionCommitError := databaseTransaction.Commit(); transactionCommitError != nil {
 		// File and SQLite cannot share one atomic transaction. Restore the prior
 		// file if the database commit fails, and report any rollback failure.
@@ -151,16 +182,22 @@ func (app *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot s
 		}
 		return fmt.Errorf("received metadata commit failed: %w", transactionCommitError)
 	}
+	// Create the watcher marker map when this is the first remote update.
 	if app.remoteFileHashes == nil {
 		app.remoteFileHashes = make(map[string]string)
 	}
+	// Mark the accepted hash so the watcher ignores the resulting disk event.
 	app.remoteFileHashes[filepath.Clean(destination)] = metadata.FileHash
+	// Log the verified receiver result for manual testing.
 	fmt.Printf("Received and verified %s in Synced Files (sender version %d; recorded with receiver's local sequence)\n", metadata.FileName, metadata.Version)
+	// Return success after file and metadata updates both complete.
 	return nil
 }
 
 // Rabindra Neupane
+// copyRemoteBackup copies one complete file without overwriting an existing path.
 func copyRemoteBackup(source, destination string) error {
+	// Open the verified source file for copying.
 	input, sourceOpeningError := os.Open(source)
 	if sourceOpeningError != nil {
 		return sourceOpeningError
@@ -186,7 +223,9 @@ func copyRemoteBackup(source, destination string) error {
 // Version schema: Santosh Tripathee. Receiver mapping: Rabindra Neupane.
 // Sender counters are not shared revision IDs. Accepted contents get a local
 // sequence number and local parent; repeated identical contents reuse the row.
+// recordReceivedVersion saves an accepted remote version in the local history.
 func (app *App) recordReceivedVersion(databaseTransaction *sql.Tx, metadata network.FileMetadata) error {
+	// Read the current local version when this file is already known.
 	var current int
 	currentVersionQueryError := databaseTransaction.QueryRow("SELECT current_version FROM files WHERE id = ?", metadata.FileID).Scan(&current)
 	if currentVersionQueryError != nil && currentVersionQueryError != sql.ErrNoRows {
@@ -254,8 +293,9 @@ func (app *App) recordReceivedVersion(databaseTransaction *sql.Tx, metadata netw
 // accepted file's metadata and its chunk cache unchanged. Repeated conflicts
 // with identical contents reuse the same copy instead of multiplying files.
 // Rabindra Neupane
-// Save incoming conflict copies under Synced Files Conflict.
+// preserveIncomingConflict saves the incoming version without replacing the local file.
 func (app *App) preserveIncomingConflict(metadata network.FileMetadata, verified string) error {
+	// Create the dedicated folder used to preserve incoming conflict copies.
 	folder := filepath.Join(filepath.Dir(app.syncFolderPath), "Synced Files Conflict")
 	if conflictFolderCreationError := os.MkdirAll(folder, 0755); conflictFolderCreationError != nil {
 		return conflictFolderCreationError
@@ -282,10 +322,13 @@ func (app *App) preserveIncomingConflict(metadata network.FileMetadata, verified
 }
 
 // Rabindra Neupane
+// errVersionChunksDiffer reports that recorded hashes do not match current chunks.
 var errVersionChunksDiffer = errors.New("version chunk contents differ")
 
 // Rabindra Neupane
+// compareRecordedChunks verifies one stored version against ordered current chunks.
 func compareRecordedChunks(databaseTransaction *sql.Tx, versionID int64, chunks []Chunk) error {
+	// Query stored chunk indexes and hashes in order.
 	chunkRows, chunkQueryError := databaseTransaction.Query("SELECT chunk_index, chunk_hash FROM chunks WHERE file_version_id = ? ORDER BY chunk_index", versionID)
 	if chunkQueryError != nil {
 		return chunkQueryError

@@ -3,12 +3,10 @@ package network
 
 import "context"
 
-// FileMetadata describes one proposed file version. Version numbers use the
-// existing file_versions convention; BaseVersion is nil for an initial version.
-// ChunkHashes are ordered by the same zero-based indexes used by ChunkFile.
 // Rabindra Neupane
+// FileMetadata describes one proposed file version and its ordered chunk hashes.
+// Base fields identify the shared version used for incremental comparison.
 // Version counters are local; BaseChunkHashes identifies the shared content base.
-// Rabindra Neupane
 type FileMetadata struct {
 	// Conflict contract agreed with Santosh Tripathee; base is a whole-file SHA-256.
 	BaseHash    string `json:"baseHash"`
@@ -28,7 +26,7 @@ type FileMetadata struct {
 }
 
 // Rabindra Neupane
-// TransferPlan identifies an isolated incoming transfer and its missing chunks.
+// TransferPlan identifies an isolated incoming transfer and the chunks it needs.
 type TransferPlan struct {
 	TransferID   string `json:"transferId"`
 	NeededChunks []int  `json:"neededChunks"`
@@ -46,22 +44,24 @@ type TransferCompletion struct {
 }
 
 // Rabindra Neupane
-// SyncConflictError means the original was kept and the incoming bytes were saved.
+// SyncConflictError reports that the local file was kept and the incoming copy was saved.
 type SyncConflictError struct{ ConflictFile string }
 
 // Rabindra Neupane
-// KeepLocalError tells the sender that the receiver already has a newer version.
+// KeepLocalError reports that the receiver already has a newer file version.
 type KeepLocalError struct{}
 
 // Rabindra Neupane
 // Error describes the recovery action after the receiver keeps its local file.
 func (*KeepLocalError) Error() string {
+	// Return the recovery message shown to the sender.
 	return "receiver has a newer version; pull it before syncing this older copy"
 }
 
 // Rabindra Neupane
 // Error reports where the receiver preserved the incoming conflict copy.
 func (e *SyncConflictError) Error() string {
+	// Return the path where the incoming copy was preserved.
 	return "sync conflict: incoming copy preserved at " + e.ConflictFile
 }
 
@@ -78,7 +78,8 @@ type Device struct {
 }
 
 // Rabindra Neupane
-// ChunkLocationStore is implemented by Santosh's metadata layer.
+// ChunkLocationStore defines the database operations needed for chunk locations.
+// The persistent implementation belongs to Santosh's metadata layer.
 // ReplaceDeviceChunks atomically replaces the entire inventory, including an
 // empty inventory. DeviceIDsForChunk returns unique device IDs for that hash.
 type ChunkLocationStore interface {
@@ -87,7 +88,7 @@ type ChunkLocationStore interface {
 }
 
 // Rabindra Neupane
-// RegistrationKey proves which registered installation is reporting inventory.
+// ChunkReport carries one registered installation's complete chunk inventory.
 type ChunkReport struct {
 	DeviceID        string   `json:"deviceId"`
 	RegistrationKey string   `json:"registrationKey"`
@@ -95,7 +96,7 @@ type ChunkReport struct {
 }
 
 // Rabindra Neupane
-// ChunkLocations lists currently online devices that report a verified chunk.
+// ChunkLocations lists online registered devices that report a verified chunk.
 type ChunkLocations struct {
 	ChunkHash string   `json:"chunkHash"`
 	Devices   []Device `json:"devices"`

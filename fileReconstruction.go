@@ -34,7 +34,7 @@ type StoredChunk struct {
 // partially reconstructed file in the sync folder if reconstruction fails.
 //
 // Rabindra Neupane
-// Manual reconstruction saves to Reconstructed Files.
+// ReconstructFile manually rebuilds a file into Reconstructed Files.
 // Incoming transfers reconstruct in
 // isolation before applyIncomingTransfer installs the verified file in Synced Files.
 func (app *App) ReconstructFile(fileName string) error {
@@ -99,6 +99,7 @@ func (app *App) ReconstructFile(fileName string) error {
 // Rabindra Neupane
 // Reconstruction implementation: Nisham Karki
 // Transfer size and hash verification: Rabindra Neupane
+// reconstructStoredFile rebuilds ordered chunks and verifies transfer metadata.
 func (app *App) reconstructStoredFile(fileName string, metadata *network.FileMetadata) error {
 
 	// Use only the actual file name to prevent folder paths
@@ -386,18 +387,25 @@ func (app *App) reconstructStoredFile(fileName string, metadata *network.FileMet
 }
 
 // Rabindra Neupane
+// replaceVerifiedFile atomically replaces a destination after verification.
 // Go's Windows rename uses MOVEFILE_REPLACE_EXISTING. A failed rename leaves
 // the original destination in place; retry temporary locks without deleting it.
 func replaceVerifiedFile(source, destination string) error {
+	// Keep the latest rename error for the caller.
 	var fileRenameError error
+	// Retry short Windows file locks without deleting the current destination.
 	for attempt := 0; attempt < 5; attempt++ {
+		// Replace the destination in one rename operation.
 		fileRenameError = os.Rename(source, destination)
+		// Return immediately after a successful replacement.
 		if fileRenameError == nil {
 			return nil
 		}
+		// Wait briefly before another attempt when the file is locked.
 		if attempt < 4 {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
+	// Return the final rename error after all retries fail.
 	return fileRenameError
 }

@@ -9,19 +9,17 @@ import (
 	"path/filepath"
 )
 
-// SaveChunks creates individual folder for each file that are chunks
-// in local "File Chunks" directory
-// Each synchronized files get their own chunk folder
-// If modified files become smaller, and produce less chunks, old chunks are removed
 // Rabindra Neupane
-// Preserve Nisham Karki's public method while internal callers receive failures.
+// SaveChunks preserves Nisham Karki's public method and logs storage failures.
 func (app *App) SaveChunks(filePath string, chunks []Chunk) {
+	// Save the chunks and report errors for older callers that do not return them.
 	if chunkSavingError := app.saveChunks(filePath, chunks); chunkSavingError != nil {
 		fmt.Println("Chunk saving error:", chunkSavingError)
 	}
 }
 
 // Rabindra Neupane
+// saveChunks stores changed chunks and removes unused trailing chunks.
 // Chunk storage implementation: Nisham Karki. Error propagation: Rabindra Neupane.
 func (app *App) saveChunks(filePath string, chunks []Chunk) error {
 

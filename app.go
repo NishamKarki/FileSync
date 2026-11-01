@@ -49,13 +49,17 @@ type SyncResult struct {
 // Chunking implementation: Nisham Karki
 // Version metadata implementation: Santosh Tripathee
 // Incremental network integration: Rabindra Neupane
+// SyncFile sends only the chunks requested by the selected receiver.
 func (app *App) SyncFile(address, fileName string) (*SyncResult, error) {
+	// Start the normal incremental transfer workflow.
 	return app.sendPreparedFile(address, fileName, false)
 }
 
 // Rabindra Neupane
-// Both transfer modes use Santosh's conflict metadata and verified acknowledgements.
+// sendPreparedFile prepares one stable snapshot and runs incremental or benchmark transfer.
+// Both modes use Santosh's conflict metadata and verified acknowledgements.
 func (app *App) sendPreparedFile(address, fileName string, whole bool) (*SyncResult, error) {
+	// Lock transfer work so two outgoing syncs cannot mix progress and state.
 	if !app.transferMutex.TryLock() {
 		return nil, fmt.Errorf("another file transfer is already running")
 	}
@@ -105,8 +109,10 @@ func (app *App) sendPreparedFile(address, fileName string, whole bool) (*SyncRes
 }
 
 // Rabindra Neupane
-// Never advance a conflict/keep-local base or a sender edited since the snapshot.
+// finishOutgoingSync handles the receiver result and advances only a verified shared base.
+// Never advance a conflict, keep-local result, or file edited since the snapshot.
 func (app *App) finishOutgoingSync(fileName string, metadata network.FileMetadata, result *SyncResult, outgoingTransferError error) (*SyncResult, error) {
+	// Check whether the receiver reported a conflict, newer file, or transfer failure.
 	if outgoingTransferError != nil {
 		var syncConflictError *network.SyncConflictError
 		var keepLocalError *network.KeepLocalError
@@ -143,7 +149,9 @@ func (app *App) finishOutgoingSync(fileName string, metadata network.FileMetadat
 // Rabindra Neupane
 // Caller holds fileProcessingMutex. Chunking/storage: Nisham Karki.
 // Version recording: Santosh Tripathee. Preparation coordination: Rabindra Neupane.
+// prepareFileForSync records and returns one stable outgoing file snapshot.
 func (app *App) prepareFileForSync(fileName string) ([]Chunk, network.FileMetadata, error) {
+	// Create an empty result used when preparation fails.
 	var metadata network.FileMetadata
 	if app.db == nil {
 		return nil, metadata, fmt.Errorf("file metadata database is unavailable")
@@ -182,9 +190,10 @@ func (app *App) prepareFileForSync(fileName string) ([]Chunk, network.FileMetada
 }
 
 // Rabindra Neupane
-// Read Santosh's existing version records without changing the database schema
-// after serialized preparation records the current content.
+// metadataForSync reads Santosh's version records and creates network metadata.
+// Serialized preparation records the current content before this read.
 func (app *App) metadataForSync(fileName string, chunks []Chunk) (network.FileMetadata, error) {
+	// Create metadata with ordered space for every current chunk hash.
 	metadata := network.FileMetadata{FileID: fileName, FileName: fileName, ChunkSize: chunkSize, ChunkHashes: make([]string, len(chunks))}
 	hasher := sha256.New()
 	for index, chunk := range chunks {
@@ -262,6 +271,7 @@ func (app *App) metadataForSync(fileName string, chunks []Chunk) (network.FileMe
 
 // NewApp creates a new App application struct
 func NewApp() *App {
+	// Create the application state before Wails startup fills its services.
 	return &App{}
 }
 
@@ -269,6 +279,7 @@ func NewApp() *App {
 // Initializes main folders, database, file watcher, timer storage, and local network server
 
 func (app *App) startup(ctx context.Context) {
+	// Save the Wails context used by dialogs and frontend events.
 	app.ctx = ctx
 
 	// Initializes the map that is used to manage file processing timers.
@@ -344,31 +355,42 @@ func (app *App) startup(ctx context.Context) {
 }
 
 // Rabindra Neupane
+// ConfigureCoordinator applies the coordinator role or remote address from the frontend.
 func (app *App) ConfigureCoordinator(coordinator bool, address string) error {
+	// Check that startup created the device registry.
 	if app.deviceRegistry == nil {
 		return fmt.Errorf("device registration is unavailable; check startup logs")
 	}
+	// Save the new role or coordinator address.
 	return app.deviceRegistry.Configure(coordinator, address)
 }
 
 // Rabindra Neupane
+// GetRegistrationStatus returns this installation's public registration state.
 func (app *App) GetRegistrationStatus() (network.RegistrationStatus, error) {
+	// Check that registration is available before reading its status.
 	if app.deviceRegistry == nil {
 		return network.RegistrationStatus{}, fmt.Errorf("device registration is unavailable; check startup logs")
 	}
+	// Return a safe public snapshot to the frontend.
 	return app.deviceRegistry.Status(), nil
 }
 
 // Rabindra Neupane
+// GetRegisteredDevices returns the coordinator's current online and offline devices.
 func (app *App) GetRegisteredDevices() ([]network.Device, error) {
+	// Check that registration is available before requesting devices.
 	if app.deviceRegistry == nil {
 		return nil, fmt.Errorf("device registration is unavailable")
 	}
+	// Read devices locally or from the selected coordinator.
 	return app.deviceRegistry.Devices()
 }
 
 // Rabindra Neupane
+// shutdown stops network and registry services before closing the database.
 func (app *App) shutdown(ctx context.Context) {
+	// Stop the HTTP server before closing shared services.
 	if app.networkCancel != nil {
 		app.networkCancel()
 	}
@@ -388,15 +410,16 @@ func (app *App) shutdown(ctx context.Context) {
 // Rabindra Neupane
 // Reconstruction implementation: Nisham Karki
 // Network integration: Rabindra Neupane
+// completeIncomingTransfer applies a receiver transfer after chunk verification.
 func (app *App) completeIncomingTransfer(metadata network.FileMetadata, chunkRoot string) error {
+	// Apply the verified staged chunks through receiver conflict handling.
 	return app.applyIncomingTransfer(metadata, chunkRoot)
 }
 
-// /Rabindra Neupane
-// PingDevice pings a device to check whether another FileSync device
-// can be reached at the specified address
+// Rabindra Neupane
+// PingDevice checks whether a FileSync device can be reached at the address.
 func (app *App) PingDevice(address string) (network.PingResponse, error) {
-	// Send a ping request to other device
+	// Send the ping request through the network client.
 	pingResponse, pingError := network.PingDevice(address)
 
 	// Check for any error during ping
@@ -407,20 +430,23 @@ func (app *App) PingDevice(address string) (network.PingResponse, error) {
 	return *pingResponse, nil
 }
 
-// /Rabindra Neupane
+// Rabindra Neupane
 // GetLocalIP retrieves the local IP address of the current device
 func (app *App) GetLocalIP() (string, error) {
+	// Read the active local address from the network package.
 	return network.GetLocalIP()
 }
 
 // Rabindra Neupane
-// DiscoverDevices discovers devices on the local network
+// DiscoverDevices scans the local subnet for FileSync devices.
 func (app *App) DiscoverDevices() []network.Device {
+	// Scan the local subnet through the network package.
 	return network.DiscoverDevices()
 }
 
-// /Rabindra Neupane
-// SendFile sends a file to another FileSync device on the network
+// Rabindra Neupane
+// SendFile runs the whole-file benchmark transfer for the selected file.
 func (app *App) SendFile(address string, fileName string) (*SyncResult, error) {
+	// Start the whole-file benchmark workflow.
 	return app.sendPreparedFile(address, fileName, true)
 }

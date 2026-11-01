@@ -8,10 +8,12 @@ import (
 )
 
 // Rabindra Neupane
-// Implement Santosh's agreed disk-hash contract until his helper is available.
-// Missing files differ from empty files (whose SHA-256 is nonempty).
+// HashFileOnDisk returns the current complete-file hash from disk.
+// Missing files return an empty value, while empty files still have a SHA-256 hash.
 func HashFileOnDisk(path string) (string, error) {
+	// Create the hash from the file's current bytes.
 	fileHash, fileHashingError := hashStoredFile(path)
+	// Treat a missing file as absent content for conflict decisions.
 	if os.IsNotExist(fileHashingError) {
 		return "", nil
 	}
