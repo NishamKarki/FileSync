@@ -1,0 +1,205 @@
+/* Author: Santosh Tripathee
+   Conflict notification interface
+   Styles for the Conflicts button, the conflict panel, and the pop-up
+   notice shown when a new conflict is detected. Colors follow the
+   conflict-window prototype (conflict-window.css). */
+
+/* Conflicts button when conflicts are waiting for a decision */
+#conflicts-button.has-conflicts {
+    background: #8a5a00;
+    border-color: #e0a030;
+}
+
+#conflicts-button.has-conflicts:hover {
+    background: #6f4800;
+}
+
+/* Dark layer covering the main window while the panel is open */
+.conflict-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+
+    /* Centers the panel in the window */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.6);
+}
+
+/* display: flex above would override the hidden attribute without this */
+.conflict-overlay[hidden],
+.conflict-notification[hidden] {
+    display: none;
+}
+
+/* The panel itself */
+.conflict-panel {
+    width: min(720px, 100%);
+    max-height: 85vh;
+
+    /* Scrolls inside the panel when there are many conflicts */
+    overflow-y: auto;
+
+    background: #1f1f1f;
+    border: 1px solid #444;
+    border-radius: 8px;
+}
+
+/* Title bar with the close button */
+.conflict-panel-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 22px;
+    border-bottom: 1px solid #444;
+}
+
+.conflict-panel-title h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+/* Result or error message after a choice */
+#conflict-panel-status {
+    margin: 0;
+    padding: 0 22px;
+    overflow-wrap: anywhere;
+}
+
+#conflict-panel-status:not(:empty) {
+    padding: 12px 22px;
+    border-bottom: 1px solid #444;
+}
+
+#conflict-panel-status.conflict-status-error {
+    color: #ff9b9b;
+}
+
+.conflict-empty {
+    padding: 22px;
+    margin: 0;
+    color: #aaa;
+}
+
+/* One conflict */
+.conflict-card {
+    padding: 18px 22px;
+    border-bottom: 1px solid #444;
+}
+
+.conflict-card:last-child {
+    border-bottom: none;
+}
+
+.conflict-label {
+    margin: 0 0 4px 0;
+    color: #999;
+    font-size: 12px;
+}
+
+.conflict-card h3 {
+    margin: 0;
+    font-size: 17px;
+    overflow-wrap: anywhere;
+}
+
+.conflict-notice {
+    color: #ccc;
+    font-size: 14px;
+}
+
+/* The two versions side by side */
+.conflict-versions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.conflict-version {
+    padding: 14px 16px;
+    background: #292929;
+    border: 1px solid #414141;
+    border-radius: 7px;
+    overflow-wrap: anywhere;
+}
+
+.conflict-version p {
+    margin: 0;
+}
+
+.conflict-version .conflict-version-title {
+    color: #999;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+.conflict-version .conflict-version-device {
+    margin: 6px 0;
+    font-weight: 600;
+}
+
+.conflict-version .conflict-version-content {
+    color: #aaa;
+    font-size: 13px;
+}
+
+.conflict-detected-time,
+.conflict-choice-help {
+    color: #aaa;
+    font-size: 13px;
+}
+
+.conflict-choice-help {
+    margin-bottom: 0;
+}
+
+/* The three choice buttons */
+.conflict-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.conflict-actions button:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+/* Pop-up notice when a new conflict is detected */
+.conflict-notification {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 20;
+    max-width: min(380px, calc(100% - 32px));
+
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+
+    padding: 14px 16px;
+    background: #3a2a00;
+    border: 1px solid #e0a030;
+    border-radius: 6px;
+    overflow-wrap: anywhere;
+}
+
+.conflict-notification p {
+    margin: 0;
+}
+
+.conflict-notification div {
+    display: flex;
+    gap: 8px;
+}
+
+/* One column for the two versions in a narrow window */
+@media (max-width: 560px) {
+    .conflict-versions {
+        grid-template-columns: 1fr;
+    }
+}

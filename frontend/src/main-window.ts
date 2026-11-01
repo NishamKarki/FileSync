@@ -16,6 +16,9 @@ import { EventsOn } from '../wailsjs/runtime/runtime';
 
 import './main-window.css'; // CSS Style for this main window
 
+// Santosh Tripathee - conflict notification interface
+import { setupConflictPanel } from './conflict-panel' ;
+
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="app">
 
@@ -93,7 +96,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             </details>
 
             <div>
-                <button>Conflicts</button>
+                <button id="conflicts-button">Conflicts</button>
                 <button>Settings</button>
             </div>
         </footer>
@@ -525,3 +528,6 @@ EventsOn('file-change', (modifiedFile: string) => {
 void refreshRegistration();
 const registrationRefreshTimer = window.setInterval(() => { void refreshRegistration(); }, 5000);
 window.addEventListener('beforeunload', () => window.clearInterval(registrationRefreshTimer));
+
+// Santosh Tripathee - conflict notification interface ( conflict-panel.ts)
+setupConflictPanel();

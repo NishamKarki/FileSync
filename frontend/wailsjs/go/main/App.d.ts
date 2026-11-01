@@ -14,6 +14,8 @@ export function DiscoverDevices():Promise<Array<network.Device>>;
 
 export function FileWatcher(arg1:string):Promise<void>;
 
+export function GetConflicts():Promise<Array<main.ConflictRecord>>;
+
 export function GetLocalIP():Promise<string>;
 
 export function GetRegisteredDevices():Promise<Array<network.Device>>;
@@ -27,6 +29,8 @@ export function ListSyncedFiles():Promise<Array<main.SyncedFile>>;
 export function PingDevice(arg1:string):Promise<network.PingResponse>;
 
 export function ReconstructFile(arg1:string):Promise<void>;
+
+export function ResolveConflict(arg1:number,arg2:string):Promise<main.ConflictResolution>;
 
 export function SaveChunks(arg1:string,arg2:Array<main.Chunk>):Promise<void>;
 
