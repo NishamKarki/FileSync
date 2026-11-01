@@ -150,19 +150,18 @@ button:hover {
     /* Adds vertical separation between discovered devices */
     margin: 13px 0;
 
-    /* Creates a small space between pieces of device information */
-    gap: 5px;
+    /* Separates each labeled device detail row */
+    gap: 6px;
 
     /* Shows that a device row can be clicked or selected */
     cursor: pointer;
 
-    /* Places the device information on one horizontal line */
-    display: flex;
+    /* Places the device information in aligned rows */
+    display: grid;
 
-    /* Keeps device information vertically aligned within the row */
-    align-items: center;
+    padding: 14px 16px;
 
-    grid-template-columns: 16px 1fr auto;
+    align-items: start;
 }
 
 .device.selected-device {
@@ -183,7 +182,32 @@ button:hover {
     padding: 8px;
     min-width: 0;
 }
-#registration-status { overflow-wrap: anywhere; font-size: 0.85rem; }
+#registration-status {
+    overflow-wrap: anywhere;
+    font-size: 0.85rem;
+}
+
+.registration-details {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.registration-detail-row {
+    display: grid;
+    grid-template-columns: 110px minmax(0, 1fr);
+    column-gap: 12px;
+    align-items: start;
+}
+
+.registration-detail-label {
+    font-weight: 700;
+}
+
+.registration-detail-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
 button.device { width: 100%; text-align: left; white-space: pre-line; overflow-wrap: anywhere; }
 button.device:disabled { opacity: 0.55; cursor: default; }
 

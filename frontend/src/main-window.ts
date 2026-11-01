@@ -65,7 +65,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
                     <label for="coordinator-address">Coordinator IP:port</label>
                     <input id="coordinator-address" placeholder="192.168.1.10:8080" autocomplete="off">
                     <button id="save-coordinator-button">Apply Coordinator Settings</button>
-                    <p id="registration-status" aria-live="polite">Loading device registration...</p>
+                    <div id="registration-status" aria-live="polite">Loading device registration...</div>
                 </div>
                 <button id="find-coordinator-button">Find Coordinator</button>
                 <button id="registered-devices-button">Registered Devices</button>
@@ -173,7 +173,6 @@ function renderDevices(devices: ListedDevice[]) {
         row.type = 'button';
         row.className = 'device';
         row.disabled = !device.online;
-        row.textContent = `Device name: ${device.name}\nDevice ID: ${device.id || 'Not assigned'}\nAddress: ${address} · ${device.online ? 'online' : 'offline'}${device.coordinator ? ' · Coordinator' : ''}`;
         if (device.lastSeen) row.title = `Last seen: ${device.lastSeen}\nDevice ID: ${device.id}`;
         // Discovery chooses setup details; only registered rows choose sync targets.
         if (showingDiscovery) {
@@ -192,6 +191,13 @@ function renderDevices(devices: ListedDevice[]) {
             container.appendChild(row);
             continue;
         }
+        appendDetailRows(row, [
+            ['Device name', device.name || 'Unknown device'],
+            ['Device ID', device.id || 'Not assigned'],
+            ['Address', address],
+            ['Status', device.online ? 'Online' : 'Offline'],
+            ['Role', device.coordinator ? 'Coordinator' : 'Client']
+        ]);
         const selected = selectedDeviceID ? device.id === selectedDeviceID : address === previousAddress;
         if (selected && device.online) {
             selectedDeviceAddress = address;
@@ -208,7 +214,58 @@ function renderDevices(devices: ListedDevice[]) {
     }
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// Adds consistently aligned label and value rows without treating device data
+// as HTML.
+function appendDetailRows(container: HTMLElement, details: string[][]) {
+    container.replaceChildren();
+
+    for (const [detailLabel, detailValue] of details) {
+        const detailRow = document.createElement('div');
+        detailRow.className = 'registration-detail-row';
+
+        const labelElement = document.createElement('span');
+        labelElement.className = 'registration-detail-label';
+        labelElement.textContent = `${detailLabel}:`;
+
+        const valueElement = document.createElement('span');
+        valueElement.className = 'registration-detail-value';
+        valueElement.textContent = detailValue;
+
+        detailRow.append(labelElement, valueElement);
+        container.appendChild(detailRow);
+    }
+}
+
+// Rabindra Neupane
+// Shows coordinator details as labeled rows so long IDs remain easy to match
+// with the correct device information.
+function renderRegistrationStatus(
+    container: HTMLElement,
+    status: Awaited<ReturnType<typeof GetRegistrationStatus>>
+) {
+    if (!status.configured) {
+        container.classList.remove('registration-details');
+        container.textContent = 'Choose this computer as coordinator, or enter the coordinator address.';
+        return;
+    }
+
+    const registrationState = status.registered
+        ? 'Registered'
+        : status.lastError || 'Connecting';
+    const registrationDetails = [
+        ['Role', status.coordinator ? 'Coordinator' : 'Client'],
+        ['Device name', status.deviceName || 'Unknown device'],
+        ['Coordinator', status.coordinatorAddress || 'Connecting'],
+        ['Status', registrationState],
+        ['Device ID', status.deviceId || 'Not assigned']
+    ];
+
+    container.classList.add('registration-details');
+    appendDetailRows(container, registrationDetails);
+}
+
+// Rabindra Neupane
 async function refreshRegistration() {
     if (registrationRefreshRunning) return;
     registrationRefreshRunning = true;
@@ -224,13 +281,8 @@ async function refreshRegistration() {
             address.disabled = mode.checked;
         }
         registrationSettingsLoaded = true;
-        const deviceDetails = status.coordinator
-            ? `Coordinator: ${status.deviceName} (${status.coordinatorAddress || 'connecting'})`
-            : `Client: ${status.deviceName} - Coordinator: ${status.coordinatorAddress || 'connecting'}`;
         if (label) {
-            label.textContent = status.configured
-                ? `${deviceDetails} · ${status.registered ? 'registered' : status.lastError || 'connecting'}${status.deviceId ? ` · Device ID: ${status.deviceId}` : ''}`
-                : 'Choose this computer as coordinator, or enter the coordinator address.';
+            renderRegistrationStatus(label, status);
         }
         if (!status.configured && !showingDiscovery) renderDevices([]);
         if (status.configured && !showingDiscovery) {
