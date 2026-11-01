@@ -1,4 +1,7 @@
 <!DOCTYPE html>
+<!-- First prototype of the conflict window. It only uses sample data and
+     isn't connected to the Go side. The working conflict screen is built
+     in conflict-panel.ts. -->
 <html lang="en">
 
 <head>
@@ -15,6 +18,7 @@
         <!-- Header -->
         <div class="conflict-window-title">
             <h2>Synchronization Conflict</h2>
+            <!-- Close button, doesn't do anything in the prototype -->
             <button>×</button>
         </div>
 
@@ -22,6 +26,7 @@
         <!-- Main Content -->
         <div class="conflict-content">
 
+            <!-- Sample file name -->
             <div class="file-info">
 
                 <div>
@@ -31,8 +36,9 @@
 
             </div>
 
+            <!-- Tells the user what happened and asks them to choose -->
             <div class="conflict-notice">
-                <h3>Confilct Notice</h3>
+                <h3>Conflict Notice</h3>
                 <p class="description">
                     This file was modified on more than one device before
                     synchronization was completed. Choose how you want FileSync
@@ -41,7 +47,7 @@
             </div>
 
 
-            <!-- File Versions -->
+            <!-- File Versions: one card per device, with sample names and times -->
             <div class="conflict-devices">
 
                 <div class="conflict-device">
@@ -78,7 +84,7 @@
         </div>
 
 
-        <!-- Bottom Buttons -->
+        <!-- Bottom Buttons. The real panel also has Keep mine and Use incoming -->
         <div class="conflict-actions">
 
             <button class="cancel-button-clickable">

@@ -10,6 +10,7 @@
     border-color: #e0a030;
 }
 
+/* A little darker when the mouse is over it */
 #conflicts-button.has-conflicts:hover {
     background: #6f4800;
 }
@@ -37,6 +38,7 @@
 
 /* The panel itself */
 .conflict-panel {
+    /* 720px wide, but never wider than the window */
     width: min(720px, 100%);
     max-height: 85vh;
 
@@ -57,6 +59,7 @@
     border-bottom: 1px solid #444;
 }
 
+/* Headings get extra space by default, so remove it to line up with the X button */
 .conflict-panel-title h2 {
     margin: 0;
     font-size: 18px;
@@ -69,15 +72,18 @@
     overflow-wrap: anywhere;
 }
 
+/* Only gets spacing and a line under it when there is a message to show */
 #conflict-panel-status:not(:empty) {
     padding: 12px 22px;
     border-bottom: 1px solid #444;
 }
 
+/* Errors show in light red so they stand out */
 #conflict-panel-status.conflict-status-error {
     color: #ff9b9b;
 }
 
+/* Message shown when there are no conflicts left */
 .conflict-empty {
     padding: 22px;
     margin: 0;
@@ -90,22 +96,26 @@
     border-bottom: 1px solid #444;
 }
 
+/* The last card doesn't need a line under it */
 .conflict-card:last-child {
     border-bottom: none;
 }
 
+/* Small "Conflicting file" label above the file name */
 .conflict-label {
     margin: 0 0 4px 0;
     color: #999;
     font-size: 12px;
 }
 
+/* File name. Long names wrap instead of stretching the panel */
 .conflict-card h3 {
     margin: 0;
     font-size: 17px;
     overflow-wrap: anywhere;
 }
 
+/* Short explanation of what happened to the file */
 .conflict-notice {
     color: #ccc;
     font-size: 14px;
@@ -118,6 +128,7 @@
     gap: 12px;
 }
 
+/* Box for each version: "Your version" and "Incoming version" */
 .conflict-version {
     padding: 14px 16px;
     background: #292929;
@@ -130,22 +141,26 @@
     margin: 0;
 }
 
+/* Small heading at the top of each box */
 .conflict-version .conflict-version-title {
     color: #999;
     font-size: 11px;
     text-transform: uppercase;
 }
 
+/* Which device the version came from */
 .conflict-version .conflict-version-device {
     margin: 6px 0;
     font-weight: 600;
 }
 
+/* Short content ID (first 8 characters of the file hash) */
 .conflict-version .conflict-version-content {
     color: #aaa;
     font-size: 13px;
 }
 
+/* Detected time and the note explaining the three choices */
 .conflict-detected-time,
 .conflict-choice-help {
     color: #aaa;
@@ -164,6 +179,7 @@
     margin-top: 12px;
 }
 
+/* Buttons fade while a choice is being saved, so nobody clicks twice */
 .conflict-actions button:disabled {
     opacity: 0.55;
     cursor: default;
@@ -171,6 +187,7 @@
 
 /* Pop-up notice when a new conflict is detected */
 .conflict-notification {
+    /* Top-right corner, above the panel overlay (20 is higher than 10) */
     position: fixed;
     top: 16px;
     right: 16px;
@@ -192,6 +209,7 @@
     margin: 0;
 }
 
+/* Review conflict and Dismiss buttons in one row */
 .conflict-notification div {
     display: flex;
     gap: 8px;
