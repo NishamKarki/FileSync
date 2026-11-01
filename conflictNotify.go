@@ -12,11 +12,13 @@ import (
 
 // recordDetectedConflict stores a preserved incoming conflict and notifies the UI.
 func (app *App) recordDetectedConflict(metadata network.FileMetadata, localHash string, conflictPreservationResult error) {
+	// Check that the apply result is a preserved synchronization conflict.
 	var synchronizationConflictError *network.SyncConflictError
 	if !errors.As(conflictPreservationResult, &synchronizationConflictError) {
 		return
 	}
 
+	// Save the conflict details used by the resolution screen.
 	conflictRecordingError := RecordConflict(app.db, ConflictRecord{
 		FileID:         metadata.FileID,
 		LocalHash:      localHash,
@@ -25,6 +27,7 @@ func (app *App) recordDetectedConflict(metadata network.FileMetadata, localHash 
 		SenderDeviceID: metadata.DeviceID,
 		ConflictCopy:   synchronizationConflictError.ConflictFile,
 	})
+	// Log a storage failure without hiding the already preserved file copy.
 	if conflictRecordingError != nil {
 		fmt.Println("Failed to record conflict:", conflictRecordingError)
 		return

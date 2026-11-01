@@ -37,8 +37,9 @@ func (app *App) conflictFilePaths(conflict ConflictRecord) (string, string, erro
 // Checks that the other device's saved version still exists and has not
 // changed, by comparing its SHA-256 with the hash recorded for the conflict.
 func checkSavedCopy(copyPath string, expectedHash string) error {
-
+	// Hash the archived incoming copy from its current disk contents.
 	savedCopyHash, copyHashingError := HashFileOnDisk(copyPath)
+	// Return when the saved copy cannot be read.
 	if copyHashingError != nil {
 		return copyHashingError
 	}
@@ -56,11 +57,12 @@ func checkSavedCopy(copyPath string, expectedHash string) error {
 // copy in Synced Files Conflict stays where it is.
 // Returns the name of the new file.
 func (app *App) keepBothVersions(conflict ConflictRecord) (string, error) {
-
+	// Resolve and validate the archived incoming copy path.
 	_, copyPath, pathError := app.conflictFilePaths(conflict)
 	if pathError != nil {
 		return "", pathError
 	}
+	// Verify that the archived copy still matches the recorded incoming hash.
 	if savedCopyError := checkSavedCopy(copyPath, conflict.IncomingHash); savedCopyError != nil {
 		return "", savedCopyError
 	}
@@ -72,24 +74,29 @@ func (app *App) keepBothVersions(conflict ConflictRecord) (string, error) {
 	// Try "notes (conflict copy).txt", then "notes (conflict copy 2).txt", and
 	// so on, so an existing file is never overwritten
 	for copyNumber := 1; copyNumber <= 100; copyNumber++ {
+		// Build the first label or a numbered label for later attempts.
 		copyLabel := "conflict copy"
 		if copyNumber > 1 {
 			copyLabel = fmt.Sprintf("conflict copy %d", copyNumber)
 		}
 		newFileName := fmt.Sprintf("%s (%s)%s", nameWithoutExtension, copyLabel, extension)
+		// Place the new independent copy inside Synced Files.
 		newFilePath := filepath.Join(app.syncFolderPath, newFileName)
 
 		// copyRemoteBackup (Rabindra's) only creates a file that doesn't exist
 		// yet. If the name is taken, it fails with an "already exists" error and
 		// we try the next number.
 		copyingError := copyRemoteBackup(copyPath, newFilePath)
+		// Return the first file name that was created successfully.
 		if copyingError == nil {
 			return newFileName, nil
 		}
+		// Stop on errors other than an already-used file name.
 		if !os.IsExist(copyingError) {
 			return "", copyingError
 		}
 	}
+	// Stop after the safety limit prevents an endless naming loop.
 	return "", fmt.Errorf("too many conflict copies of %s already exist in Synced Files", conflict.FileID)
 }
 
@@ -98,11 +105,12 @@ func (app *App) keepBothVersions(conflict ConflictRecord) (string, error) {
 // Synced Files Conflict as, for example, "notes.replaced-<hash>.txt".
 // Returns the name of that backup.
 func (app *App) useIncomingVersion(conflict ConflictRecord) (string, error) {
-
+	// Resolve and validate the local and archived incoming paths.
 	localPath, copyPath, pathError := app.conflictFilePaths(conflict)
 	if pathError != nil {
 		return "", pathError
 	}
+	// Verify that the archived incoming version is still intact.
 	if savedCopyError := checkSavedCopy(copyPath, conflict.IncomingHash); savedCopyError != nil {
 		return "", savedCopyError
 	}
@@ -120,8 +128,11 @@ func (app *App) useIncomingVersion(conflict ConflictRecord) (string, error) {
 	backupName := strings.TrimSuffix(conflict.FileID, extension) + ".replaced-" + conflict.LocalHash + extension
 	backupPath := filepath.Join(conflictFolder, backupName)
 
+	// Save the current local version before replacing it.
 	backupError := copyRemoteBackup(localPath, backupPath)
+	// Accept an existing verified backup from an earlier attempt.
 	if backupError != nil {
+		// Return unexpected backup failures immediately.
 		if !os.IsExist(backupError) {
 			return "", backupError
 		}
@@ -135,7 +146,9 @@ func (app *App) useIncomingVersion(conflict ConflictRecord) (string, error) {
 	// Files, then move it into place in one step. The file watcher and other
 	// programs never see a half-written file, and the archived copy stays.
 	temporaryPath := filepath.Join(conflictFolder, "incoming-"+conflict.IncomingHash+".tmp")
+	// Remove a temporary file left by an earlier failed attempt.
 	os.Remove(temporaryPath) // a leftover from an earlier failed attempt, if any
+	// Copy the verified incoming version into temporary replacement storage.
 	if temporaryCopyError := copyRemoteBackup(copyPath, temporaryPath); temporaryCopyError != nil {
 		return "", temporaryCopyError
 	}
@@ -143,27 +156,34 @@ func (app *App) useIncomingVersion(conflict ConflictRecord) (string, error) {
 	// Check once more right before replacing, in case the user saved the
 	// file while the copies were being made
 	if unchangedError := checkLocalFileUnchanged(localPath, conflict); unchangedError != nil {
+		// Remove temporary data when the local file changed during preparation.
 		os.Remove(temporaryPath)
 		return "", unchangedError
 	}
+	// Atomically replace the local file with the verified incoming version.
 	if replaceError := replaceVerifiedFile(temporaryPath, localPath); replaceError != nil {
+		// Remove temporary data when replacement fails.
 		os.Remove(temporaryPath)
 		return "", replaceError
 	}
 
+	// Return the name of the preserved previous local version.
 	return backupName, nil
 }
 
 // Checks that the user's file still has the hash it had when the conflict
 // was detected.
 func checkLocalFileUnchanged(localPath string, conflict ConflictRecord) error {
-
+	// Hash the user's current file before applying a stored conflict decision.
 	currentLocalHash, localHashingError := HashFileOnDisk(localPath)
+	// Return when the local file cannot be read.
 	if localHashingError != nil {
 		return localHashingError
 	}
+	// Reject the decision when the user edited the file after detection.
 	if currentLocalHash != conflict.LocalHash {
 		return fmt.Errorf("%s changed after the conflict was detected. Sync it again so FileSync can decide with the latest version", conflict.FileID)
 	}
+	// Return success when the local version still matches the conflict record.
 	return nil
 }

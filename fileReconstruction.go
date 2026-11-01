@@ -349,19 +349,24 @@ func (app *App) reconstructStoredFile(fileName string, metadata *network.FileMet
 
 	// Verify the temporary output before touching an existing reconstructed file.
 	if metadata != nil {
+		// Open the reconstructed output for complete size and hash verification.
 		output, reconstructedFileOpeningError := os.Open(temporaryFilePath)
 		if reconstructedFileOpeningError != nil {
 			return reconstructedFileOpeningError
 		}
+		// Hash the complete reconstructed output while counting its bytes.
 		hasher := sha256.New()
 		size, reconstructedFileReadingError := io.Copy(hasher, output)
 		reconstructedFileClosingError := output.Close()
+		// Return a reading error before trusting the reconstructed output.
 		if reconstructedFileReadingError != nil {
 			return reconstructedFileReadingError
 		}
+		// Return a closing error because buffered reads may be incomplete.
 		if reconstructedFileClosingError != nil {
 			return reconstructedFileClosingError
 		}
+		// Require both the declared size and complete SHA-256 hash to match.
 		if size != metadata.FileSize || hex.EncodeToString(hasher.Sum(nil)) != metadata.FileHash {
 			return fmt.Errorf("reconstructed file failed size or SHA-256 verification")
 		}

@@ -10,9 +10,11 @@ import (
 // still need the user's decision. Wails makes every exported App method
 // available to the frontend automatically.
 func (app *App) GetConflicts() ([]ConflictRecord, error) {
+	// Check that conflict storage is available before reading it.
 	if app.db == nil {
 		return nil, fmt.Errorf("metadata database is unavailable")
 	}
+	// Return every unresolved conflict for the frontend.
 	return ListOpenConflicts(app.db)
 }
 
@@ -36,8 +38,9 @@ type ConflictResolution struct {
 // Files are changed first and the decision is saved after, so if a file
 // step fails, the conflict stays open and the user can choose again.
 func (app *App) ResolveConflict(conflictID int64, choice string) (ConflictResolution, error) {
-
+	// Create an empty result for errors that happen before resolution.
 	var resolution ConflictResolution
+	// Check that conflict storage is available before changing files.
 	if app.db == nil {
 		return resolution, fmt.Errorf("metadata database is unavailable")
 	}
@@ -48,11 +51,13 @@ func (app *App) ResolveConflict(conflictID int64, choice string) (ConflictResolu
 	app.fileProcessingMutex.Lock()
 	defer app.fileProcessingMutex.Unlock()
 
+	// Load the unresolved conflict selected by the user.
 	conflict, loadError := GetOpenConflict(app.db, conflictID)
 	if loadError != nil {
 		return resolution, loadError
 	}
 
+	// Carry out the requested file action and prepare its user message.
 	var resultMessage string
 	switch choice {
 
@@ -84,6 +89,7 @@ func (app *App) ResolveConflict(conflictID int64, choice string) (ConflictResolu
 		return resolution, resolveError
 	}
 
+	// Return the resolved file and instructions for sharing the decision.
 	resolution.FileID = conflict.FileID
 	resolution.Message = resultMessage + fmt.Sprintf(" Sync %s to the other device so it gets your decision.", conflict.FileID)
 	return resolution, nil

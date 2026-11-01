@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+// GetAvailableFilePath finds a safe destination name without overwriting files.
+// It reports whether an existing destination already contains the same data.
 func GetAvailableFilePath(
 	selectedFilePath string,
 	syncFolderPath string,
@@ -29,6 +31,7 @@ func GetAvailableFilePath(
 	// Start with the original file name
 	fileIndex := 0
 
+	// Keep trying the original name and then numbered alternatives.
 	for {
 
 		var newFileName string
@@ -76,6 +79,7 @@ func GetAvailableFilePath(
 			return destinationFilePath, true
 		}
 
+		// Try the next numbered name when this destination contains different data.
 		fileIndex++
 	}
 }

@@ -1,4 +1,3 @@
-
 // Author: Rabindra Neupane
 
 import {
@@ -159,6 +158,27 @@ let ownDeviceID = '';
 type ListedDevice = { id: string; name: string; ip: string; port: number; online: boolean; lastSeen?: string; coordinator?: boolean };
 
 // Rabindra Neupane
+// formatLastSeen converts the coordinator timestamp to this computer's timezone.
+function formatLastSeen(lastSeen: string): string {
+    // Parse the UTC timestamp received from the coordinator.
+    const lastSeenDate = new Date(lastSeen);
+
+    // Keep the original value when the timestamp cannot be parsed.
+    if (Number.isNaN(lastSeenDate.getTime())) return lastSeen;
+
+    // Format the time using the current device's language and timezone settings.
+    return new Intl.DateTimeFormat(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZoneName: 'short'
+    }).format(lastSeenDate);
+}
+
+// Rabindra Neupane
 // renderDevices lists online devices first and keeps offline records visible.
 function renderDevices(devices: ListedDevice[]) {
     // Read the container used for coordinator discovery and registered devices.
@@ -181,7 +201,8 @@ function renderDevices(devices: ListedDevice[]) {
         row.type = 'button';
         row.className = 'device';
         row.disabled = !device.online;
-        if (device.lastSeen) row.title = `Last seen: ${device.lastSeen}\nDevice ID: ${device.id}`;
+        // Show the last-seen value in the timezone of the computer viewing the list.
+        if (device.lastSeen) row.title = `Last seen: ${formatLastSeen(device.lastSeen)}\nDevice ID: ${device.id}`;
         // Discovery chooses setup details; only registered rows choose sync targets.
         if (showingDiscovery) {
             row.textContent = `${device.name} - Coordinator - ${address} - Use this coordinator`;
