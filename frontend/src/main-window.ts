@@ -1,6 +1,8 @@
-
 // Author: Rabindra Neupane
+// Main FileSync window: file list, devices, recent activity and the sync buttons.
+// Nisham, Rabindra and Santosh all have parts in here, marked by name below.
 
+// Go functions from app.go that Wails makes available to the frontend
 import {
     AddFiles,
     ListSyncedFiles,
@@ -13,14 +15,15 @@ import {
     GetRegisteredDevices
 } from '../wailsjs/go/main/App';
 
-// EventsOn calls runtime event from file modification detected by fileWatcher.go
+// EventsOn listens for events sent from Go, like the file changes from fileWatcher.go
 import { EventsOn } from '../wailsjs/runtime/runtime';
 
-import './main-window.css'; // CSS Style for this main window
+import './main-window.css'; // styles for this window
 
 // Santosh Tripathee - conflict notification interface
 import { setupConflictPanel } from './conflict-panel' ;
 
+// Layout of the whole window. The functions below fill in the lists and status text.
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <div class="app">
 
@@ -106,9 +109,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     </div>
 `
 // Rabindra Neupane
-// testLocalIP reads the local network address for development diagnostics.
+// Prints this computer's local IP in the console. Only used while developing.
 async function testLocalIP() {
-    // Read and log the address used by the local FileSync server.
     try {
         const localIP = await GetLocalIP();
         console.log("FileSync local IP address:");
@@ -121,9 +123,9 @@ async function testLocalIP() {
 testLocalIP();
 
 // Rabindra Neupane
-// findCoordinator scans only when the user needs to choose a coordinator.
+// Scans the network for a coordinator. Only runs when the user clicks Find Coordinator.
 async function findCoordinator() {
-    // Stop when a coordinator scan is already running.
+    // Don't start a second scan while one is already running
     if (coordinatorSearchRunning) return;
     coordinatorSearchRunning = true;
     showingDiscovery = true;
@@ -134,6 +136,7 @@ async function findCoordinator() {
     if (button) button.disabled = true;
     try {
         const devices = await DiscoverDevices();
+        // Only list the devices that are coordinators
         if (showingDiscovery) renderDevices((devices || []).filter(device => device.coordinator));
     } catch (error) {
         if (showingDiscovery && container) container.textContent = `Coordinator search failed: ${error}`;
@@ -143,8 +146,8 @@ async function findCoordinator() {
     }
 }
 // Rabindra Neupane
- document.getElementById('find-coordinator-button')?.addEventListener('click', () => { void findCoordinator(); });
-// Save the selected device used by synchronization controls.
+document.getElementById('find-coordinator-button')?.addEventListener('click', () => { void findCoordinator(); });
+// Which device is picked for syncing, plus a few flags so scans and refreshes don't overlap
 let selectedDeviceAddress: string | null = null;
 let selectedDeviceID: string | null = null;
 let showingDiscovery = false;
@@ -155,19 +158,18 @@ let registrationSettingsEdited = false;
 let ownDeviceID = '';
 
 // Rabindra Neupane
-// ListedDevice describes the coordinator data displayed in the frontend.
+// A device as it comes back from the coordinator
 type ListedDevice = { id: string; name: string; ip: string; port: number; online: boolean; lastSeen?: string; coordinator?: boolean };
 
 // Rabindra Neupane
-// renderDevices lists online devices first and keeps offline records visible.
+// Draws the device list. Online devices go on top, offline ones stay in the list but can't be clicked.
 function renderDevices(devices: ListedDevice[]) {
-    // Read the container used for coordinator discovery and registered devices.
     const container = document.getElementById('connected-devices');
     if (!container) return;
     const previousAddress = selectedDeviceAddress;
     selectedDeviceAddress = null;
     container.replaceChildren();
-    // Keep online devices first, preserving the existing order within each group.
+    // Leave this computer out of its own list and put online devices first
     const peers = devices
         .filter(device => !ownDeviceID || device.id !== ownDeviceID)
         .sort((a, b) => Number(b.online) - Number(a.online));
@@ -176,13 +178,15 @@ function renderDevices(devices: ListedDevice[]) {
         return;
     }
     for (const device of peers) {
+        // IPv6 addresses need square brackets before the port
         const address = device.ip.includes(':') ? `[${device.ip}]:${device.port}` : `${device.ip}:${device.port}`;
         const row = document.createElement('button');
         row.type = 'button';
         row.className = 'device';
         row.disabled = !device.online;
         if (device.lastSeen) row.title = `Last seen: ${device.lastSeen}\nDevice ID: ${device.id}`;
-        // Discovery chooses setup details; only registered rows choose sync targets.
+        // In discovery mode, clicking a coordinator just fills in the address box.
+        // Picking a device to sync with only happens in the registered list.
         if (showingDiscovery) {
             row.textContent = `${device.name} - Coordinator - ${address} - Use this coordinator`;
             row.addEventListener('click', () => {
@@ -206,6 +210,7 @@ function renderDevices(devices: ListedDevice[]) {
             ['Status', device.online ? 'Online' : 'Offline'],
             ['Role', device.coordinator ? 'Coordinator' : 'Client']
         ]);
+        // Keep the same device selected after the list refreshes
         const selected = selectedDeviceID ? device.id === selectedDeviceID : address === previousAddress;
         if (selected && device.online) {
             selectedDeviceAddress = address;
@@ -223,9 +228,10 @@ function renderDevices(devices: ListedDevice[]) {
 }
 
 // Rabindra Neupane
-// appendDetailRows adds aligned labels and values without treating device data as HTML.
+// Fills a box with "label: value" rows. Everything goes in as text, not HTML,
+// since device names come from other computers.
 function appendDetailRows(container: HTMLElement, details: string[][]) {
-    // Clear older values before adding the latest details.
+    // Clear out the old rows first
     container.replaceChildren();
 
     for (const [detailLabel, detailValue] of details) {
@@ -246,12 +252,12 @@ function appendDetailRows(container: HTMLElement, details: string[][]) {
 }
 
 // Rabindra Neupane
-// renderRegistrationStatus shows coordinator details and keeps long IDs readable.
+// Shows this computer's role, the coordinator address and whether it's registered
 function renderRegistrationStatus(
     container: HTMLElement,
     status: Awaited<ReturnType<typeof GetRegistrationStatus>>
 ) {
-    // Show setup guidance until a coordinator choice is configured.
+    // Nothing set up yet, so just tell the user what to do
     if (!status.configured) {
         container.classList.remove('registration-details');
         container.textContent = 'Choose this computer as coordinator, or enter the coordinator address.';
@@ -274,9 +280,9 @@ function renderRegistrationStatus(
 }
 
 // Rabindra Neupane
-// refreshRegistration reads status and devices without overlapping requests.
+// Gets the registration status and the device list from the coordinator.
+// Skips if the last refresh hasn't finished yet.
 async function refreshRegistration() {
-    // Stop when the previous registration refresh is still running.
     if (registrationRefreshRunning) return;
     registrationRefreshRunning = true;
     const label = document.getElementById('registration-status');
@@ -285,6 +291,7 @@ async function refreshRegistration() {
         ownDeviceID = status.deviceId;
         const mode = document.querySelector<HTMLInputElement>('#coordinator-mode');
         const address = document.querySelector<HTMLInputElement>('#coordinator-address');
+        // Fill in the saved settings once at startup, but never over something the user is typing
         if (!registrationSettingsLoaded && !registrationSettingsEdited && mode && address) {
             mode.checked = status.coordinator;
             address.value = status.coordinatorAddress;
@@ -312,8 +319,10 @@ async function refreshRegistration() {
 }
 
 //Rabindra Neupane
+// Coordinator settings: the checkbox, the address box and the Apply button
 const coordinatorMode = document.querySelector<HTMLInputElement>('#coordinator-mode');
 const coordinatorAddress = document.querySelector<HTMLInputElement>('#coordinator-address');
+// No address needed when this computer is the coordinator itself
 coordinatorMode?.addEventListener('change', () => {
     registrationSettingsEdited = true;
     if (coordinatorAddress) coordinatorAddress.disabled = coordinatorMode.checked;
@@ -333,23 +342,23 @@ saveCoordinatorButton?.addEventListener('click', async () => {
         saveCoordinatorButton.disabled = false;
     }
 });
+// Registered Devices goes back from the discovery list to the normal device list
 document.getElementById('registered-devices-button')?.addEventListener('click', () => {
     showingDiscovery = false;
     void refreshRegistration();
 });
 
 // Rabindra Neupane
-// Save the file names selected from the current Synced Files list.
+// Files picked in the list, and where they were picked from (shown in the label)
 const selectedFileNames = new Set<string>();
 let selectionSource = 'Synced Files';
-// Use to populate "Recent activity" section with recently modified files
+// The Recent Activity text
 const recentFileActivity = document.getElementById('recent-activity')
 
 // Rabindra Neupane
 let transferInProgress = false;
-// setTransferBusy disables transfer controls while one batch is running.
+// Turns off Sync Now and Send Whole File while a transfer is running
 function setTransferBusy(busy: boolean) {
-    // Save the shared busy state used by transfer controls.
     transferInProgress = busy;
     for (const id of ['sync-now-button', 'send-whole-file-button']) {
         const button = document.querySelector<HTMLButtonElement>(`#${id}`);
@@ -357,13 +366,13 @@ function setTransferBusy(busy: boolean) {
     }
 }
 
-//Rabindra Neupane
 // Rabindra Neupane
-// transferSelectedFiles processes a fixed selection in order and reports each result.
 const syncNowButton = document.querySelector<HTMLButtonElement>('#sync-now-button');
 const wholeFileButton = document.querySelector<HTMLButtonElement>('#send-whole-file-button');
+// Sends the selected files to the selected device one by one and lists how each one went.
+// wholeFile true = send the full file, false = only send the chunks that changed.
 async function transferSelectedFiles(wholeFile: boolean) {
-    // Stop duplicate clicks and require both a peer and selected files.
+    // Ignore extra clicks, and make sure files and a device are picked
     if (transferInProgress) return;
     if (selectedFileNames.size === 0 || !selectedDeviceAddress) {
         if (recentFileActivity) recentFileActivity.textContent = 'Please select files and a device first.';
@@ -378,9 +387,10 @@ async function transferSelectedFiles(wholeFile: boolean) {
     if (button) button.textContent = wholeFile ? 'Sending files...' : 'Syncing...';
     try {
         for (const [index, name] of names.entries()) {
+            // Show progress like "2/5: Syncing report.docx..." under the results so far
             if (recentFileActivity) recentFileActivity.textContent = [...outcomes, `${index + 1}/${names.length}: ${wholeFile ? 'Sending' : 'Syncing'} ${name}...`].join('\n');
             try {
-                // Surface Santosh's decisions consistently for both transfer modes.
+                // Same messages for both buttons, based on the receiver's conflict check (Santosh)
                 const result = wholeFile ? await SendFile(address, name) : await SyncFile(address, name);
                 if (result.keepLocal) {
                     outcomes.push(`${name}: receiver kept its newer version. Pull it before sending this older copy.`);
@@ -389,6 +399,7 @@ async function transferSelectedFiles(wholeFile: boolean) {
                 } else {
                     const details = wholeFile ? 'Whole file verified on receiver.'
                         : `Verified on receiver. Sent ${result.chunksSent} of ${result.totalChunks} chunks (${result.chunkBytesSent} bytes of chunk data; excludes metadata and HTTP overhead).`;
+                    // baseUpdated is false when the file was edited while it was being sent
                     outcomes.push(`${name}: ${details}${result.baseUpdated ? '' : ' Local file changed during transfer; latest edits are not confirmed synced.'}`);
                 }
             } catch (error) {
@@ -396,6 +407,7 @@ async function transferSelectedFiles(wholeFile: boolean) {
             }
         }
     } finally {
+        // Put the button back to normal and show every result
         setTransferBusy(false);
         if (button) button.textContent = label;
         if (recentFileActivity) recentFileActivity.textContent = outcomes.join('\n');
@@ -407,11 +419,11 @@ wholeFileButton?.addEventListener('click', () => { void transferSelectedFiles(tr
 // File picker implementation: Nisham Karki. Working-folder selection: Rabindra Neupane.
 const selectFileButton = document.querySelector<HTMLButtonElement>('#select-file-button');
 let fileListRefreshing = false;
+// Remembers the last file list so the table only redraws when something changed
 let fileListSignature = '';
 // Rabindra Neupane
-// sizeFileList measures five rows so longer lists scroll inside the table.
+// Makes the scroll area five rows tall, so longer lists scroll inside the table
 function sizeFileList() {
-    // Read the scroll area, table body, and current rows.
     const viewport = document.querySelector<HTMLElement>('.file-table-scroll');
     const table = document.querySelector<HTMLTableElement>('.file-table');
     if (!viewport || !table) return;
@@ -422,6 +434,7 @@ function sizeFileList() {
     viewport.style.maxHeight = `${Math.ceil(height)}px`;
 }
 //Rabindra Neupane
+// Resize again whenever the table changes size, and stop watching when the window closes
 const fileTableObserver = new ResizeObserver(sizeFileList);
 const fileTable = document.querySelector('.file-table');
 if (fileTable) fileTableObserver.observe(fileTable);
@@ -429,9 +442,8 @@ window.addEventListener('beforeunload', () => fileTableObserver.disconnect());
 
 
 // Rabindra Neupane
-// updateFileSelection removes selections that are no longer present.
+// Updates the "selected files" label and ticks the matching checkboxes
 function updateFileSelection() {
-    // Read the label that summarizes the current selection.
     const label = document.getElementById('selected-files');
     if (label) label.textContent = selectedFileNames.size
         ? `${selectionSource} (${selectedFileNames.size} selected): ${[...selectedFileNames].join(', ')}`
@@ -442,18 +454,20 @@ function updateFileSelection() {
     });
 }
 // Rabindra Neupane
-// refreshSyncedFiles reads the working folder and redraws only when data changes.
+// Reads the Synced Files folder and redraws the table, but only when something actually changed
 async function refreshSyncedFiles() {
-    // Stop when a previous folder refresh is still running.
+    // Skip if the last refresh is still running
     if (fileListRefreshing) return;
     fileListRefreshing = true;
     const status = document.getElementById('file-list-status');
     try {
         const files = await ListSyncedFiles();
+        // Drop selections for files that aren't in the folder anymore
         for (const name of selectedFileNames) {
             if (!files.some(file => file.name === name)) selectedFileNames.delete(name);
         }
         updateFileSelection();
+        // Compare with last time so the table isn't rebuilt every 2 seconds
         const signature = JSON.stringify(files);
         if (signature !== fileListSignature) {
             const body = document.getElementById('synced-file-list');
@@ -463,6 +477,7 @@ async function refreshSyncedFiles() {
                 const row = document.createElement('tr');
                 const nameCell = document.createElement('td');
                 const label = document.createElement('label');
+                // Named radio, but it's a checkbox so more than one file can be picked
                 const radio = document.createElement('input');
                 radio.type = 'checkbox';
                 radio.name = 'sync-file';
@@ -478,6 +493,7 @@ async function refreshSyncedFiles() {
                 label.append(radio, document.createTextNode(` ${file.name}`));
                 nameCell.appendChild(label);
                 row.appendChild(nameCell);
+                // Status, Size and Modified columns
                 for (const text of ['Available locally', `${file.size.toLocaleString()} bytes`, new Date(file.modified).toLocaleString()]) {
                     const cell = document.createElement('td');
                     cell.textContent = text;
@@ -497,6 +513,7 @@ async function refreshSyncedFiles() {
 }
 
 //Rabindra Neupane
+// "Add files from computer" button. The added files get selected right away so they can be synced.
 selectFileButton?.addEventListener('click', async () => {
     selectFileButton.disabled = true;
     try {
@@ -517,33 +534,36 @@ selectFileButton?.addEventListener('click', async () => {
 });
 
 //Rabindra Neupane
+// Load the file list now, then check the folder again every 2 seconds
 void refreshSyncedFiles();
 const fileListTimer = window.setInterval(() => { void refreshSyncedFiles(); }, 2000);
 window.addEventListener('beforeunload', () => window.clearInterval(fileListTimer));
 ///// Nisham Karki
-// Array to store list of recent activities
+// Last few file changes, newest first
 let recentActivites: string[] = []
 
+// fileWatcher.go sends this whenever a file in Synced Files changes
 EventsOn('file-change', (modifiedFile: string) => {
     void refreshSyncedFiles();
     // Keep the most recent activity on top
     recentActivites.unshift(modifiedFile)
 
-    // Keep only 5 most recent activities at a time.
-    // We will show only the 5 most recent activites for now
+    // Only keep the last 5
     recentActivites = recentActivites.slice(0, 5)
 
-    // THis will replace the currently displayed activities with any newer activity
+    // Show the new list, unless a transfer is using the activity box right now
     if (recentFileActivity && !transferInProgress) {
         recentFileActivity.textContent = recentActivites.join('\n')
     }
 })
 
 // Rabindra Neupane
-// Poll registration separately from explicit subnet scans; avoid overlapping requests.
+// Check registration every 5 seconds. This is separate from Find Coordinator,
+// which only scans the network when it's clicked.
 void refreshRegistration();
 const registrationRefreshTimer = window.setInterval(() => { void refreshRegistration(); }, 5000);
 window.addEventListener('beforeunload', () => window.clearInterval(registrationRefreshTimer));
 
-// Santosh Tripathee - conflict notification interface ( conflict-panel.ts)
+// Santosh Tripathee - sets up the Conflicts button, panel and pop-up notice (conflict-panel.ts)
 setupConflictPanel();
+

@@ -1,14 +1,12 @@
-/* Main FileSync Window
-   Basic appearance used throughout the application */
+/* Main FileSync window
+   Basic look used across the whole app */
 
 html,
 body {
-    /* Allows the application content to use almost the full window width */
+    /* Almost the full window width, with a small gap on each side */
     width: 99%;
-
-    /* Keeps a small amount of space on both sides of the FileSync window */
-    margin-left: 5;
-    margin-right: 5;
+    margin-left: 5px;
+    margin-right: 5px;
 
     background: #181818;
     color: #f1f1f1;
@@ -16,60 +14,39 @@ body {
     font-family: "Segoe UI", Arial, sans-serif;
 }
 
-/* Application Header
-   Displays the FileSync title at the top of the window */
+/* Header with the FileSync title */
 .title {
-    /* Adds space around the FileSync heading so it does not
-       touch the top or sides of the application window */
     padding: 18px 26px;
-
-    /* Separates the title area from the file selection section below it */
     border-bottom: 1px solid #444;
 }
 
 .title h1 {
-    /* Removes the browser's default heading margin */
+    /* Headings come with a default margin, we don't want it here */
     margin: 0;
 
     font-size: 20px;
 }
 
-/* File Selection Area
-   Contains the selected file information and Select File button */
+/* File selection area: selected files on the left, Add files button on the right */
 .select-file-to-sync {
-    /* Creates a visual boundary between file selection
-       and the file list underneath it */
     border-bottom: 1px solid #444;
-
-    /* Places the file information and Select File button
-       beside each other in one horizontal row */
     display: flex;
-
-    /* Vertically aligns the file information and button
-       within the same row */
     align-items: center;
-
-    /* Keeps the file details on the left and moves the
-       Select File button toward the right side */
     justify-content: space-between;
 }
 
-/* Shared FileSync Buttons
-   Gives application buttons a consistent appearance */
+/* Default look for every button in the app */
 button {
-    /* Gives button labels space */
     padding: 9px 16px;
 
     background: #646464;
     color: #ffffff;
 
-    /* Creates a thin boundary around each button */
     border: 1px solid;
 
-    /* Keeps button corners almost square */
+    /* Almost square corners */
     border-radius: 1px;
 
-    /* Changes the mouse cursor to indicate that the control is clickable */
     cursor: pointer;
 }
 
@@ -77,86 +54,61 @@ button:hover {
     background: #3a3a3a;
 }
 
+/* Same inside spacing for the lower panels */
 .section {
-    /* Creates consistent spacing inside the lower information panels */
     padding: 20px 26px;
 }
 
 .section h2 {
     font-size: 20px;
-    /* Removes unnecessary spacing above the section heading */
     margin: 0 0 15px 0;
 }
 
-/* File List
-   Displays files currently shown in the FileSync interface */
+/* File list */
 .file-details {
-    /* Separates the file table from the device/activity
-       area shown underneath it */
     border-bottom: 1px solid #444;
 }
 
 .file-table {
-    /* Leaves a small amount of space below the file list
-       before the next section begins */
     margin: 0 0 10px 0;
-
-    /* Allows the table to use the complete available width
-       of the FileSync window */
     width: 100%;
 }
 
+/* Name, Status, Size and Modified headings, lined up with the rows below */
 .file-table th {
-    /* Adds spacing inside each table heading cell */
     padding: 10px 8px;
 
     color: #aaa;
 
-    /* Aligns the Name, Status, Size, and Modified headings
-       with the file information underneath them */
     text-align: left;
-
-    /* Draws a line underneath the table headings to separate
-       them from the synchronized file entries */
     border-bottom: 1px solid #555;
 }
 
 .file-table td {
-    /* Gives each file row enough vertical and horizontal space */
     padding: 12px 8px;
     font-size: 14px;
 }
 
-/* Connected Devices + Recent Activity
-   Places both information panels beside each other */
+/* Connected Devices and Recent Activity side by side.
+   Recent Activity gets a bit more room. */
 .progress-activity {
-    /* Gives Recent Activity slightly more horizontal space
-       than the Connected Devices panel */
     grid-template-columns: 1fr 1.5fr;
-    /* Uses a grid so the Connected Devices and Recent Activity
-       panels can occupy separate columns */
     display: grid;
 }
 
+/* Line between the two panels */
 .devices {
-    /* Adds a divider between Connected Devices on the left
-       and Recent Activity on the right */
     border-right: 1px solid #444;
 }
 
-/* Individual Device Entries
-   Controls how discovered FileSync devices appear in the list */
+/* One device in the Connected Devices list */
 .device {
-    /* Adds vertical separation between discovered devices */
     margin: 13px 0;
-
-    /* Separates each labeled device detail row */
     gap: 6px;
 
-    /* Shows that a device row can be clicked or selected */
+    /* Devices can be clicked to select them */
     cursor: pointer;
 
-    /* Places the device information in aligned rows */
     display: grid;
 
     padding: 14px 16px;
@@ -164,35 +116,38 @@ button:hover {
     align-items: start;
 }
 
+/* Outline around the device that's currently picked */
 .device.selected-device {
-    /* Places a visible outline around the currently selected device */
     border: 2px solid;
-
-    /* Rounds the selection outline */
     border-radius: 6px;
 }
 
+/* Coordinator checkbox, IP:port box, Apply button and the status line under them */
 .coordinator-controls {
     display: flex;
     flex-direction: column;
     gap: 8px;
     margin-bottom: 16px;
 }
+/* The text box only, not the checkbox. min-width 0 stops it from overflowing the panel */
 .coordinator-controls input:not([type="checkbox"]) {
     padding: 8px;
     min-width: 0;
 }
+/* Registration status can contain long IDs and addresses, so let it wrap */
 #registration-status {
     overflow-wrap: anywhere;
     font-size: 0.85rem;
 }
 
+/* Registration info shown as label / value rows */
 .registration-details {
     display: grid;
     gap: 6px;
     margin-top: 8px;
 }
 
+/* Fixed 110px column for the label, the value takes the rest */
 .registration-detail-row {
     display: grid;
     grid-template-columns: 110px minmax(0, 1fr);
@@ -208,58 +163,52 @@ button:hover {
     min-width: 0;
     overflow-wrap: anywhere;
 }
+/* Each device is a button. pre-line keeps the line breaks between name, ID and address.
+   Offline devices are disabled and faded. */
 button.device { width: 100%; text-align: left; white-space: pre-line; overflow-wrap: anywhere; }
 button.device:disabled { opacity: 0.55; cursor: default; }
 
-/* Recent Activity
-   Displays file-change messages produced by FileSync */
+/* Recent Activity */
 .activity p span {
-    /* Allows the span to use a fixed width while remaining
-       inside the activity text line */
+    /* Fixed width so the labels line up */
     display: inline-block;
-
-    /* Keeps activity labels aligned with each other */
     width: 50px;
 }
 
+/* Keeps each activity on its own line */
 #recent-activity {
     white-space: pre-line;
 }
 
-/* Bottom Action Bar
-   Contains synchronization and application control buttons */
+/* Bottom bar: Sync Now on the left, Conflicts and Settings on the right */
 .footer {
-    /* Adds spacing around the footer controls */
     padding: 15px 26px;
-
-    /* Separates the bottom action bar from the main content above */
     border-top: 1px solid #444;
-
-    /* Places the synchronization controls and secondary controls
-       on the same horizontal line */
     display: flex;
-
-    /* Keeps Sync Now / Send First Chunk on one side and
-       Conflicts / Settings on the opposite side */
     justify-content: space-between;
 }
 
+/* Conflicts and Settings next to each other */
 .footer div {
-    /* Places the Conflicts and Settings buttons beside each other */
     display: flex;
-
-    /* Prevents the two secondary buttons from touching */
     gap: 10px;
 }
 
+/* Lets the footer buttons wrap onto a second line when the window is narrow */
 .footer { gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+/* "Transfer diagnostics" dropdown with the Send Whole File button */
 .transfer-diagnostics summary { cursor: pointer; padding: 9px 0; }
 .transfer-diagnostics > div { flex-wrap: wrap; margin-top: 8px; }
+/* Highlight for the rows that are checked in the file list */
 .file-table .selected-file { background: #303b48; }
+/* Checkbox and file name in one row, the whole row is clickable */
 .file-table label { display: flex; align-items: center; gap: 8px; cursor: pointer; overflow-wrap: anywhere; }
 .file-table input[type="checkbox"] { flex-shrink: 0; }
+/* Long paths wrap instead of stretching the window */
 .file-path, #file-list-status { overflow-wrap: anywhere; }
 .select-file-to-sync > div > p { max-width: 42rem; }
+
+/* File list scrolls by itself after 340px, so a long list doesn't push everything down */
 .file-table-scroll {
     max-height: 340px;
     overflow: auto;
@@ -268,13 +217,16 @@ button.device:disabled { opacity: 0.55; cursor: default; }
     margin-bottom: 16px;
 }
 .file-table-scroll .file-table { margin-bottom: 0; border-collapse: collapse; }
+/* Headings stay at the top while scrolling */
 .file-table-scroll th {
     position: sticky;
     top: 0;
     z-index: 1;
     background: #191919;
 }
+/* Blue outline when the list is focused with the keyboard */
 .file-table-scroll:focus-visible { outline: 2px solid #8bbcff; outline-offset: 2px; }
+/* Dark scrollbar so it matches the rest of the window (WebView2 on Windows) */
 .file-table-scroll::-webkit-scrollbar { width: 14px; height: 14px; }
 .file-table-scroll::-webkit-scrollbar-track { background: #232323; }
 .file-table-scroll::-webkit-scrollbar-thumb { background: #858585; border: 3px solid #232323; border-radius: 8px; }

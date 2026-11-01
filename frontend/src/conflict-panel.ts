@@ -1,9 +1,9 @@
 // Author: Santosh Tripathee
-// Conflict notification interface
-// Shows the conflicts detected on this device, pops up a notice when a new
-// one is detected, and lets the user choose Keep mine, Use incoming or
-// Keep both. The Go side is in conflictScreen.go, conflictActions.go,
-// conflictLog.go and conflictNotify.go.
+// Conflict panel for FileSync.
+// Shows the conflicts found on this device, pops up a notice when a new one
+// comes in, and lets the user pick Keep mine, Use incoming or Keep both.
+// The Go side is in conflictScreen.go, conflictActions.go, conflictLog.go
+// and conflictNotify.go.
 
 import { GetConflicts, GetRegisteredDevices, ResolveConflict } from '../wailsjs/go/main/App';
 import { main } from '../wailsjs/go/models';
@@ -11,24 +11,26 @@ import { EventsOn } from '../wailsjs/runtime/runtime';
 
 import './conflict-panel.css';
 
-// The three choices. The values match the constants in conflictScreen.go.
+// These have to match the constants in conflictScreen.go,
+// otherwise Go won't know which choice was clicked
 const conflictChoices = [
     { choice: 'keep-mine', label: 'Keep mine' },
     { choice: 'use-incoming', label: 'Use incoming' },
     { choice: 'keep-both', label: 'Keep both' },
 ];
 
+// Set up in setupConflictPanel below
 let conflictsButton: HTMLButtonElement | null = null;
 let conflictOverlay: HTMLDivElement | null = null;
 let conflictNotification: HTMLDivElement | null = null;
 let notificationTimer: number | undefined;
 
-// Called once by main-window.ts, after the main window is on the screen
+// main-window.ts calls this once, after the main window is on the screen
 export function setupConflictPanel() {
     conflictsButton = document.querySelector<HTMLButtonElement>('#conflicts-button');
     conflictsButton?.addEventListener('click', () => { void openConflictPanel(); });
 
-    // The panel, hidden until the Conflicts button is clicked
+    // The panel itself, hidden until someone clicks the Conflicts button
     conflictOverlay = document.createElement('div');
     conflictOverlay.className = 'conflict-overlay';
     conflictOverlay.hidden = true;
@@ -43,7 +45,7 @@ export function setupConflictPanel() {
         </div>`;
     document.body.appendChild(conflictOverlay);
 
-    // The pop-up notice, hidden until a conflict is detected
+    // Small notice in the corner, hidden until a conflict comes in
     conflictNotification = document.createElement('div');
     conflictNotification.className = 'conflict-notification';
     conflictNotification.setAttribute('role', 'alert');
@@ -56,6 +58,7 @@ export function setupConflictPanel() {
         </div>`;
     document.body.appendChild(conflictNotification);
 
+    // Close, Review conflict and Dismiss buttons
     document.getElementById('conflict-panel-close')?.addEventListener('click', closeConflictPanel);
     document.getElementById('conflict-notification-review')?.addEventListener('click', () => {
         hideConflictNotification();
@@ -63,7 +66,7 @@ export function setupConflictPanel() {
     });
     document.getElementById('conflict-notification-dismiss')?.addEventListener('click', hideConflictNotification);
 
-    // Clicking the dark background or pressing Escape closes the panel
+    // Clicking outside the panel or pressing Escape closes it
     conflictOverlay.addEventListener('click', (clickEvent) => {
         if (clickEvent.target === conflictOverlay) closeConflictPanel();
     });
@@ -71,20 +74,22 @@ export function setupConflictPanel() {
         if (keyEvent.key === 'Escape' && conflictOverlay && !conflictOverlay.hidden) closeConflictPanel();
     });
 
-    // Sent by conflictNotify.go the moment a conflict is detected
+    // conflictNotify.go sends this as soon as a conflict is detected
     EventsOn('conflict-detected', (fileName: string) => {
         showConflictNotification(fileName);
         void refreshConflictCount();
+        // If the panel is already open, redraw it so the new conflict shows up
         if (conflictOverlay && !conflictOverlay.hidden) void renderConflictList();
     });
 
-    // Show the count for conflicts saved before the app was started
+    // Conflicts saved before the app was started should still show in the count
     void refreshConflictCount();
 }
 
 async function openConflictPanel() {
     if (!conflictOverlay) return;
     conflictOverlay.hidden = false;
+    // Focus the X button so keyboard users start inside the panel
     document.getElementById('conflict-panel-close')?.focus();
     await renderConflictList();
 }
@@ -92,21 +97,25 @@ async function openConflictPanel() {
 function closeConflictPanel() {
     if (!conflictOverlay) return;
     conflictOverlay.hidden = true;
+    // Give focus back to the Conflicts button
     conflictsButton?.focus();
 }
 
-// Updates the button label, for example "Conflicts (2)"
+// Puts the count on the button, like "Conflicts (2)", and turns it orange
+// while anything is waiting
 function updateConflictsButton(openCount: number) {
     if (!conflictsButton) return;
     conflictsButton.textContent = openCount > 0 ? `Conflicts (${openCount})` : 'Conflicts';
     conflictsButton.classList.toggle('has-conflicts', openCount > 0);
 }
 
+// Only updates the number on the button, the panel stays closed
 async function refreshConflictCount() {
     try {
         const openConflicts = await GetConflicts();
         updateConflictsButton(openConflicts.length);
     } catch (conflictCountError) {
+        // Show the error as a tooltip on the button instead of breaking the window
         if (conflictsButton) conflictsButton.title = `Cannot load conflicts: ${conflictCountError}`;
     }
 }
@@ -119,7 +128,8 @@ function showConflictNotification(fileName: string) {
     }
     conflictNotification.hidden = false;
 
-    // Hide it again after 15 seconds; the Conflicts button still shows the count
+    // Goes away by itself after 15 seconds, the count stays on the button anyway.
+    // Clear the old timer first so a second conflict doesn't get cut short.
     window.clearTimeout(notificationTimer);
     notificationTimer = window.setTimeout(hideConflictNotification, 15000);
 }
@@ -128,7 +138,7 @@ function hideConflictNotification() {
     if (conflictNotification) conflictNotification.hidden = true;
 }
 
-// Shows a message at the top of the panel, in red if it is an error
+// Message at the top of the panel, red when something went wrong
 function setPanelStatus(statusMessage: string, isError: boolean) {
     const panelStatus = document.getElementById('conflict-panel-status');
     if (!panelStatus) return;
@@ -136,7 +146,7 @@ function setPanelStatus(statusMessage: string, isError: boolean) {
     panelStatus.classList.toggle('conflict-status-error', isError);
 }
 
-// Loads the open conflicts from Go and draws one card for each
+// Gets the open conflicts from Go and builds a card for each one
 async function renderConflictList() {
     const conflictList = document.getElementById('conflict-list');
     if (!conflictList) return;
@@ -151,6 +161,7 @@ async function renderConflictList() {
     updateConflictsButton(openConflicts.length);
 
     const deviceNames = await loadDeviceNames();
+    // Clear the old cards before drawing them again
     conflictList.replaceChildren();
     if (openConflicts.length === 0) {
         conflictList.appendChild(createTextElement('p', 'conflict-empty', 'No conflicts are waiting for a decision.'));
@@ -161,9 +172,9 @@ async function renderConflictList() {
     }
 }
 
-// Device IDs mapped to device names, from Rabindra's registered device list.
-// If the coordinator doesn't answer within 1.5 seconds, the panel shows a
-// shortened device ID instead of the name.
+// Matches device IDs to device names using Rabindra's registered device list.
+// If the coordinator takes more than 1.5 seconds we stop waiting and just show
+// a short ID, so the panel never gets stuck loading.
 async function loadDeviceNames(): Promise<Map<string, string>> {
     const deviceNames = new Map<string, string>();
     try {
@@ -175,24 +186,26 @@ async function loadDeviceNames(): Promise<Map<string, string>> {
             deviceNames.set(device.id, device.name);
         }
     } catch {
-        // Names are optional
+        // Not a problem, the panel just shows IDs instead of names
     }
     return deviceNames;
 }
 
+// Device name if we have it, otherwise the first 8 characters of the ID
 function describeDevice(deviceID: string, deviceNames: Map<string, string>): string {
     if (!deviceID) return 'another device';
     return deviceNames.get(deviceID) ?? `device ${deviceID.slice(0, 8)}`;
 }
 
-// Converts the UTC time saved in the database to the user's local time
+// The database saves the time in UTC, so show it in the user's local time.
+// If the date can't be read, just show it the way it was saved.
 function formatDetectedTime(detectedAt: string): string {
     const detectedTime = new Date(detectedAt);
     return Number.isNaN(detectedTime.getTime()) ? detectedAt : detectedTime.toLocaleString();
 }
 
-// File names come from other devices, so they are always inserted as text
-// (textContent), never as HTML
+// File names come from other devices, so they always go in as plain text
+// (textContent) and never as HTML
 function createTextElement(tagName: string, className: string, text: string): HTMLElement {
     const element = document.createElement(tagName);
     if (className) element.className = className;
@@ -200,18 +213,20 @@ function createTextElement(tagName: string, className: string, text: string): HT
     return element;
 }
 
+// One of the two boxes, "Your version" or "Incoming version"
 function buildVersionCard(title: string, device: string, contentHash: string): HTMLElement {
     const versionCard = document.createElement('div');
     versionCard.className = 'conflict-version';
     versionCard.append(
         createTextElement('p', 'conflict-version-title', title),
         createTextElement('p', 'conflict-version-device', device),
-        // The first 8 characters of the SHA-256 are enough to tell versions apart
+        // First 8 characters of the hash are enough to tell the two versions apart
         createTextElement('p', 'conflict-version-content', `Content ID: ${contentHash.slice(0, 8)}`),
     );
     return versionCard;
 }
 
+// Builds the card for one conflict: file name, both versions and the three buttons
 function buildConflictCard(conflict: main.ConflictRecord, deviceNames: Map<string, string>): HTMLElement {
     const conflictCard = document.createElement('section');
     conflictCard.className = 'conflict-card';
@@ -223,6 +238,7 @@ function buildConflictCard(conflict: main.ConflictRecord, deviceNames: Map<strin
         buildVersionCard('Incoming version', `From ${describeDevice(conflict.senderDeviceId, deviceNames)}`, conflict.incomingHash),
     );
 
+    // One button for each choice
     const choiceButtons = document.createElement('div');
     choiceButtons.className = 'conflict-actions';
     for (const conflictChoice of conflictChoices) {
@@ -247,16 +263,18 @@ function buildConflictCard(conflict: main.ConflictRecord, deviceNames: Map<strin
     return conflictCard;
 }
 
-// Runs when a choice button is clicked
+// Runs when one of the three buttons is clicked
 async function resolveConflict(conflict: main.ConflictRecord, choice: string, choiceButtons: HTMLElement) {
-    // Prevents a double click while Go is working
+    // Turn the buttons off while Go is working, so a double click can't run it twice
     choiceButtons.querySelectorAll('button').forEach(choiceButton => { choiceButton.disabled = true; });
     try {
         const resolution = await ResolveConflict(conflict.id, choice);
         setPanelStatus(resolution.message, false);
+        // Redraw the list so the resolved conflict goes away
         await renderConflictList();
     } catch (conflictResolvingError) {
         setPanelStatus(`Could not resolve ${conflict.fileId}: ${conflictResolvingError}`, true);
+        // Something failed, so turn the buttons back on and let the user try again
         choiceButtons.querySelectorAll('button').forEach(choiceButton => { choiceButton.disabled = false; });
     }
 }
