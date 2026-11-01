@@ -1,3 +1,4 @@
+// Author: Rabindra Neupane
 package network
 
 import (
@@ -79,6 +80,8 @@ func CompleteChunkTransfer(requestContext context.Context, deviceAddress, transf
 }
 
 // Rabindra Neupane
+// transferRequest sends one bounded transfer request and validates one optional
+// JSON response. Redirects are disabled so data cannot be sent to another host.
 func transferRequest(requestContext context.Context, deviceAddress, requestPath, contentType string, requestBody []byte, responseResult interface{}) error {
 	requestSizeLimit := 8 << 20
 	if contentType == "application/octet-stream" {
@@ -141,78 +144,6 @@ func transferRequest(requestContext context.Context, deviceAddress, requestPath,
 		return fmt.Errorf("expected one transfer response")
 	}
 	return nil
-}
-
-// CompareFileMetadata asks a peer which chunks it needs. The address uses the
-// host:port format used by file transfers. This does not send file content or confirm
-// a completed synchronization. The context lets callers cancel the request.
-// Rabindra Neupane
-func CompareFileMetadata(requestContext context.Context, deviceAddress string, metadata FileMetadata) (*FileMetadataComparison, error) {
-	httpClient := &http.Client{
-		Transport: &http.Transport{Proxy: nil},
-		Timeout:   30 * time.Second,
-		// Metadata must be compared by the selected peer, without redirects.
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	defer httpClient.CloseIdleConnections()
-	return requestFileMetadata(requestContext, httpClient, deviceAddress, metadata)
-}
-
-// Rabindra Neupane
-func requestFileMetadata(requestContext context.Context, httpClient *http.Client, deviceAddress string, metadata FileMetadata) (*FileMetadataComparison, error) {
-	if metadataValidationError := validateFileMetadata(metadata); metadataValidationError != nil {
-		return nil, fmt.Errorf("invalid file metadata: %w", metadataValidationError)
-	}
-	requestBody, metadataEncodingError := json.Marshal(metadata)
-	if metadataEncodingError != nil {
-		return nil, fmt.Errorf("encode file metadata: %w", metadataEncodingError)
-	}
-	if len(requestBody) > 8<<20 {
-		return nil, fmt.Errorf("file metadata exceeds the receiver's 8 MiB limit")
-	}
-	httpRequest, metadataRequestCreationError := http.NewRequestWithContext(requestContext, http.MethodPost, "http://"+deviceAddress+"/file-metadata", bytes.NewReader(requestBody))
-	if metadataRequestCreationError != nil {
-		return nil, fmt.Errorf("create file metadata request: %w", metadataRequestCreationError)
-	}
-	httpRequest.Header.Set("Content-Type", "application/json")
-	httpResponse, metadataRequestSendingError := httpClient.Do(httpRequest)
-	if metadataRequestSendingError != nil {
-		return nil, fmt.Errorf("compare file metadata: %w", metadataRequestSendingError)
-	}
-	defer httpResponse.Body.Close()
-	if httpResponse.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("file metadata comparison failed: %s", httpResponse.Status)
-	}
-	// Bound the response before decoding, including any trailing data.
-	const responseLimit = 8 << 20
-	responseBody, metadataResponseReadingError := io.ReadAll(io.LimitReader(httpResponse.Body, responseLimit+1))
-	if metadataResponseReadingError != nil {
-		return nil, fmt.Errorf("read file metadata response: %w", metadataResponseReadingError)
-	}
-	if len(responseBody) > responseLimit {
-		return nil, fmt.Errorf("file metadata response exceeds 8 MiB")
-	}
-	responseDecoder := json.NewDecoder(bytes.NewReader(responseBody))
-	responseDecoder.DisallowUnknownFields()
-	var comparisonResult FileMetadataComparison
-	if metadataResponseDecodingError := responseDecoder.Decode(&comparisonResult); metadataResponseDecodingError != nil {
-		return nil, fmt.Errorf("invalid file metadata response: %w", metadataResponseDecodingError)
-	}
-	if extraMetadataResponseDataError := responseDecoder.Decode(&struct{}{}); extraMetadataResponseDataError != io.EOF {
-		return nil, fmt.Errorf("expected one file metadata response")
-	}
-	// Missing/null lists must not be mistaken for 'no chunks needed'.
-	if comparisonResult.NeededChunks == nil {
-		return nil, fmt.Errorf("file metadata response is missing neededChunks")
-	}
-	seenChunkIndexes := make(map[int]bool, len(comparisonResult.NeededChunks))
-	for _, chunkIndex := range comparisonResult.NeededChunks {
-		if chunkIndex < 0 || chunkIndex >= len(metadata.ChunkHashes) || seenChunkIndexes[chunkIndex] {
-			return nil, fmt.Errorf("file metadata response contains an invalid or duplicate chunk index: %d", chunkIndex)
-		}
-		seenChunkIndexes[chunkIndex] = true
-	}
-	return &comparisonResult, nil
 }
 
 // PingDevice sends a ping request to the specified address and returns the response

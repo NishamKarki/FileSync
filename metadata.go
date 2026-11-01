@@ -115,6 +115,29 @@ func createTables(database *sql.DB) error {
 	if chunksTableCreationError != nil {
 		return chunksTableCreationError
 	}
+
+	// Author: Santosh Tripathee
+	// Store every detected synchronization conflict until the user resolves it.
+	conflictsTable := `
+	CREATE TABLE IF NOT EXISTS conflicts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		file_id TEXT NOT NULL,
+		local_hash TEXT NOT NULL,
+		incoming_hash TEXT NOT NULL,
+		base_hash TEXT,
+		sender_device_id TEXT,
+		conflict_copy TEXT NOT NULL,
+		detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		status TEXT NOT NULL DEFAULT 'open',
+		resolution TEXT,
+		resolved_at DATETIME
+	);`
+
+	conflictsTableCreationError := executeTableCreation(database, conflictsTable)
+	if conflictsTableCreationError != nil {
+		return conflictsTableCreationError
+	}
+
 	// Device registration extends Santosh's metadata database without changing
 	// the existing files, file_versions, or chunks tables.
 	if deviceRegistryTableCreationError := executeTableCreation(database, `CREATE TABLE IF NOT EXISTS device_registry (

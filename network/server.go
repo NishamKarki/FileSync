@@ -1,3 +1,4 @@
+// Author: Rabindra Neupane
 package network
 
 import (
@@ -7,10 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -26,7 +25,7 @@ type PingResponse struct {
 
 // pingHandler handles the /ping endpoint and responds with a PingResponse
 // Rabindra Neupane
-func pingHandler(responseWriter http.ResponseWriter, httpRequest *http.Request, registry *DeviceRegistry) {
+func pingHandler(responseWriter http.ResponseWriter, _ *http.Request, registry *DeviceRegistry) {
 	responseWriter.Header().Set("Content-Type", "application/json")
 
 	// Get the hostname of the device running the server
@@ -67,8 +66,6 @@ func StartServer(serverContext context.Context, serverPort string, completeTrans
 	// Create a new HTTP ServeMux to handle incoming file transfer requests
 	// Whole-file route is attached after locating project storage below.
 	// Verified chunk uploads use the isolated /transfer/ workflow.
-	// Compare metadata without writing chunks or replacing the destination file.
-	serverRoutes.HandleFunc("/file-metadata", fileMetadataHandler)
 	projectDirectory, projectDirectoryReadingError := os.Getwd()
 	if projectDirectoryReadingError != nil {
 		fmt.Println("Cannot locate transfer storage:", projectDirectoryReadingError)
@@ -102,79 +99,9 @@ func StartServer(serverContext context.Context, serverPort string, completeTrans
 	}
 }
 
-// fileMetadataHandler accepts the proposed file metadata and reports reusable local chunks.
 // Rabindra Neupane
-func fileMetadataHandler(responseWriter http.ResponseWriter, httpRequest *http.Request) {
-	projectDirectory, projectDirectoryReadingError := os.Getwd()
-	if projectDirectoryReadingError != nil {
-		http.Error(responseWriter, "Failed to locate chunk storage", http.StatusInternalServerError)
-		return
-	}
-	compareFileMetadata(responseWriter, httpRequest, projectDirectory)
-}
-
-// compareFileMetadata takes an explicit storage root so tests never touch user files.
-// Rabindra Neupane
-func compareFileMetadata(responseWriter http.ResponseWriter, httpRequest *http.Request, projectDirectory string) {
-	if httpRequest.Method != http.MethodPost {
-		responseWriter.Header().Set("Allow", http.MethodPost)
-		http.Error(responseWriter, "Only POST requests are allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	// Bound metadata independently of the size of the file being synchronized.
-	httpRequest.Body = http.MaxBytesReader(responseWriter, httpRequest.Body, 8<<20)
-	metadataDecoder := json.NewDecoder(httpRequest.Body)
-	metadataDecoder.DisallowUnknownFields()
-	var metadata FileMetadata
-	if metadataDecodingError := metadataDecoder.Decode(&metadata); metadataDecodingError != nil {
-		http.Error(responseWriter, "Invalid file metadata", http.StatusBadRequest)
-		return
-	}
-	if extraMetadataDataError := metadataDecoder.Decode(&struct{}{}); extraMetadataDataError != io.EOF {
-		http.Error(responseWriter, "Expected one file metadata", http.StatusBadRequest)
-		return
-	}
-	if metadataValidationError := validateFileMetadata(metadata); metadataValidationError != nil {
-		http.Error(responseWriter, metadataValidationError.Error(), http.StatusBadRequest)
-		return
-	}
-	comparisonResult := FileMetadataComparison{NeededChunks: make([]int, 0)}
-	for chunkIndex, expectedHash := range metadata.ChunkHashes {
-		chunkPath := filepath.Join(projectDirectory, "File Chunks", metadata.FileName, fmt.Sprintf("chunk_%d.chunk", chunkIndex))
-		chunkFile, chunkFileOpeningError := os.Open(chunkPath)
-		if os.IsNotExist(chunkFileOpeningError) {
-			comparisonResult.NeededChunks = append(comparisonResult.NeededChunks, chunkIndex)
-			continue
-		}
-		if chunkFileOpeningError != nil {
-			http.Error(responseWriter, "Failed to read stored chunk", http.StatusInternalServerError)
-			return
-		}
-		expectedSize := metadata.ChunkSize
-		if chunkIndex == len(metadata.ChunkHashes)-1 {
-			expectedSize = metadata.FileSize - int64(chunkIndex)*metadata.ChunkSize
-		}
-		hasher := sha256.New()
-		// Read at most the expected size plus one to detect oversized chunks.
-		// LimitReader avoids allocating a buffer proportional to an untrusted size.
-		limitedReader := io.LimitReader(chunkFile, expectedSize)
-		actualSize, chunkReadingError := io.Copy(hasher, limitedReader)
-		var extraByte [1]byte
-		extraSize, extraChunkReadingError := chunkFile.Read(extraByte[:])
-		chunkFileClosingError := chunkFile.Close()
-		if chunkReadingError != nil || (extraChunkReadingError != nil && extraChunkReadingError != io.EOF) || chunkFileClosingError != nil {
-			http.Error(responseWriter, "Failed to read stored chunk", http.StatusInternalServerError)
-			return
-		}
-		if actualSize != expectedSize || extraSize != 0 || hex.EncodeToString(hasher.Sum(nil)) != expectedHash {
-			comparisonResult.NeededChunks = append(comparisonResult.NeededChunks, chunkIndex)
-		}
-	}
-	responseWriter.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(responseWriter).Encode(comparisonResult)
-}
-
-// Rabindra Neupane
+// validateFileMetadata rejects unsafe names, inconsistent sizes, invalid version
+// relationships, and malformed hashes before any transfer storage is touched.
 func validateFileMetadata(metadata FileMetadata) error {
 	// Current chunk storage is flat: IDs must match the relative file name.
 	// Reject path components on either Windows or Unix, regardless of host OS.

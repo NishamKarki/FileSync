@@ -1,3 +1,4 @@
+// Author: Rabindra Neupane
 package main
 
 import (
@@ -92,7 +93,11 @@ func (app *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot s
 	case KeepLocal:
 		return &network.KeepLocalError{}
 	case Conflict:
-		return app.preserveIncomingConflict(metadata, verified)
+		// Author: Santosh Tripathee
+		// Keep Rabindra's preserved copy, then record it and notify the screen.
+		conflictPreservationResult := app.preserveIncomingConflict(metadata, verified)
+		app.recordDetectedConflict(metadata, previousHash, conflictPreservationResult)
+		return conflictPreservationResult
 	case InSync, AcceptRemote:
 		// Verification succeeded; record content and shared base together below.
 	default:

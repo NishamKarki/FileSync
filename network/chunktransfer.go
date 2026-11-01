@@ -1,3 +1,4 @@
+// Author: Rabindra Neupane
 package network
 
 import (
@@ -17,6 +18,8 @@ import (
 )
 
 // Rabindra Neupane
+// incomingTransfer tracks one isolated receiver-side transfer until it expires
+// or finishes. Conflict and keep-local results are saved for safe retries.
 type incomingTransfer struct {
 	metadata     FileMetadata
 	root         string
@@ -36,6 +39,7 @@ type transferReceiver struct {
 }
 
 // Rabindra Neupane
+// newTransferReceiver creates the shared state used by all transfer endpoints.
 func newTransferReceiver(root string, reconstruct func(FileMetadata, string) error) *transferReceiver {
 	return &transferReceiver{projectRoot: root, reconstruct: reconstruct, transfers: make(map[string]*incomingTransfer)}
 }
@@ -53,6 +57,8 @@ func NewTransferHandler(root string, reconstruct func(FileMetadata, string) erro
 }
 
 // Rabindra Neupane
+// start validates the proposed file, creates an isolated staging folder, and
+// returns only the chunk indexes that cannot be reused from verified storage.
 func (receiver *transferReceiver) start(responseWriter http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodPost {
 		responseWriter.Header().Set("Allow", "POST")
@@ -133,6 +139,7 @@ func (receiver *transferReceiver) start(responseWriter http.ResponseWriter, requ
 }
 
 // Rabindra Neupane
+// errChunkMismatch identifies cached data that cannot be reused safely.
 var errChunkMismatch = fmt.Errorf("chunk size or hash mismatch")
 
 // Rabindra Neupane
@@ -163,6 +170,8 @@ func readVerifiedChunk(path string, metadata FileMetadata, index int) ([]byte, e
 }
 
 // Rabindra Neupane
+// chunk verifies one uploaded chunk before writing it into the transfer's
+// private staging folder. It never writes directly into accepted chunk storage.
 func (receiver *transferReceiver) chunk(responseWriter http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodPost {
 		responseWriter.Header().Set("Allow", "POST")
@@ -213,6 +222,8 @@ func (receiver *transferReceiver) chunk(responseWriter http.ResponseWriter, requ
 }
 
 // Rabindra Neupane
+// complete verifies every staged chunk, reconstructs and applies the file, then
+// caches chunks only when the application accepts the completed transfer.
 func (receiver *transferReceiver) complete(responseWriter http.ResponseWriter, httpRequest *http.Request) {
 	if httpRequest.Method != http.MethodPost {
 		responseWriter.Header().Set("Allow", "POST")

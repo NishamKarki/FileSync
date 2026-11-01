@@ -1,3 +1,4 @@
+// Author: Rabindra Neupane
 package network
 
 import "context"
@@ -26,13 +27,6 @@ type FileMetadata struct {
 	FileHash      string   `json:"fileHash"`
 }
 
-// FileMetadataComparison identifies chunks whose stored bytes cannot be reused.
-// An empty list does not confirm reconstruction or version/conflict acceptance.
-// Rabindra Neupane
-type FileMetadataComparison struct {
-	NeededChunks []int `json:"neededChunks"`
-}
-
 // Rabindra Neupane
 // TransferPlan identifies an isolated incoming transfer and its missing chunks.
 type TransferPlan struct {
@@ -41,6 +35,8 @@ type TransferPlan struct {
 }
 
 // Rabindra Neupane
+// TransferCompletion is the receiver's final acknowledgement. KeepLocal and
+// ConflictFile explain valid outcomes where the incoming file was not applied.
 type TransferCompletion struct {
 	KeepLocal    bool   `json:"keepLocal,omitempty"`
 	FileHash     string `json:"fileHash,omitempty"`
@@ -54,19 +50,23 @@ type TransferCompletion struct {
 type SyncConflictError struct{ ConflictFile string }
 
 // Rabindra Neupane
+// KeepLocalError tells the sender that the receiver already has a newer version.
 type KeepLocalError struct{}
 
 // Rabindra Neupane
+// Error describes the recovery action after the receiver keeps its local file.
 func (*KeepLocalError) Error() string {
 	return "receiver has a newer version; pull it before syncing this older copy"
 }
 
 // Rabindra Neupane
+// Error reports where the receiver preserved the incoming conflict copy.
 func (e *SyncConflictError) Error() string {
 	return "sync conflict: incoming copy preserved at " + e.ConflictFile
 }
 
 // Rabindra Neupane
+// Device is the public coordinator record used by discovery and the frontend.
 type Device struct {
 	DeviceID     string `json:"id"`
 	DeviceName   string `json:"name"`
@@ -95,6 +95,7 @@ type ChunkReport struct {
 }
 
 // Rabindra Neupane
+// ChunkLocations lists currently online devices that report a verified chunk.
 type ChunkLocations struct {
 	ChunkHash string   `json:"chunkHash"`
 	Devices   []Device `json:"devices"`
