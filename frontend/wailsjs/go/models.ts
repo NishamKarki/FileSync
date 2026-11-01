@@ -44,11 +44,11 @@ export namespace main {
 	    senderDeviceId: string;
 	    conflictCopy: string;
 	    detectedAt: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ConflictRecord(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -64,11 +64,11 @@ export namespace main {
 	export class ConflictResolution {
 	    fileId: string;
 	    message: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ConflictResolution(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.fileId = source["fileId"];

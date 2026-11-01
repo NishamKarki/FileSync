@@ -1,16 +1,13 @@
-///Rabindra Neupane
-
+// Author: Rabindra Neupane
 package network
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -21,9 +18,8 @@ import (
 	"time"
 )
 
-// DeviceSettings stores this installation's registration and coordinator settings.
-//Rabindra Neupane
-// Registration, coordinator handlers, persistence and heartbeats are kept here.
+// Rabindra Neupane
+// DeviceSettings stores this installation's persistent identity and coordinator choice.
 type DeviceSettings struct {
 	RegistrationKey    string `json:"registrationKey"`
 	DeviceID           string `json:"deviceId"`
@@ -31,8 +27,8 @@ type DeviceSettings struct {
 	CoordinatorAddress string `json:"coordinatorAddress"`
 }
 
-//Rabindra Neupane
-// Status deliberately omits the installation's private registration key.
+// Rabindra Neupane
+// RegistrationStatus exposes public registry state without the private key.
 type RegistrationStatus struct {
 	DeviceID           string `json:"deviceId"`
 	DeviceName         string `json:"deviceName"`
@@ -44,7 +40,9 @@ type RegistrationStatus struct {
 	LastError          string `json:"lastError"`
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// registrationRequest is the private registration message exchanged with the
+// coordinator. The registration key identifies one FileSync installation.
 type registrationRequest struct {
 	RegistrationKey string `json:"registrationKey"`
 	DeviceID        string `json:"deviceId"`
@@ -52,12 +50,13 @@ type registrationRequest struct {
 	Port            int    `json:"port"`
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// DeviceRegistry owns persistent identity, coordinator settings, heartbeat
+// state, registered-device queries, and the optional chunk-location service.
 type DeviceRegistry struct {
-	//Rabindra Neupane
 	chunkLocations ChunkLocationStore
 	mutex          sync.Mutex
-	db             *sql.DB
+	database       *sql.DB
 	settings       DeviceSettings
 	settingsPath   string
 	name           string
@@ -67,488 +66,377 @@ type DeviceRegistry struct {
 	lastError      string
 	generation     uint64
 	started        int64
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wake           chan struct{}
-	done           chan struct{}
+	serviceContext context.Context
+	cancelService  context.CancelFunc
+	wakeSignal     chan struct{}
+	doneSignal     chan struct{}
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// newDeviceToken creates a random lowercase identifier used for registration
+// keys and coordinator-assigned device IDs.
 func newDeviceToken() (string, error) {
+	// Read secure random bytes for a registration key or device ID.
 	var token [16]byte
-	if _, err := rand.Read(token[:]); err != nil {
-		return "", err
+	if _, tokenGenerationError := rand.Read(token[:]); tokenGenerationError != nil {
+		return "", tokenGenerationError
 	}
 	return hex.EncodeToString(token[:]), nil
 }
 
-//Rabindra Neupane
-func OpenDeviceRegistry(ctx context.Context, db *sql.DB, projectRoot string, port int) (*DeviceRegistry, error) {
-	path := filepath.Join(projectRoot, ".filesync-device.json")
-	settings := DeviceSettings{}
-	data, err := os.ReadFile(path)
-	if err == nil {
-		if err := json.Unmarshal(data, &settings); err != nil {
-			return nil, fmt.Errorf("read device settings: %w", err)
+// Rabindra Neupane
+// OpenDeviceRegistry loads or creates this installation's identity, validates
+// saved coordinator settings, and starts the heartbeat service.
+func OpenDeviceRegistry(applicationContext context.Context, database *sql.DB, projectRoot string, serverPort int) (*DeviceRegistry, error) {
+	// Build the path used to preserve this installation's private identity.
+	settingsPath := filepath.Join(projectRoot, ".filesync-device.json")
+	deviceSettings := DeviceSettings{}
+	// Read any identity and coordinator settings saved by an earlier run.
+	settingsData, settingsReadingError := os.ReadFile(settingsPath)
+	// Decode the saved settings when the file exists.
+	if settingsReadingError == nil {
+		// Stop when the settings file does not contain valid JSON.
+		if settingsDecodingError := json.Unmarshal(settingsData, &deviceSettings); settingsDecodingError != nil {
+			return nil, fmt.Errorf("read device settings: %w", settingsDecodingError)
 		}
-	} else if !os.IsNotExist(err) {
-		return nil, err
+	} else if !os.IsNotExist(settingsReadingError) {
+		return nil, settingsReadingError
 	}
-	if settings.RegistrationKey == "" {
-		settings.RegistrationKey, err = newDeviceToken()
-		if err != nil {
-			return nil, err
+	// Create a registration key for a new FileSync installation.
+	if deviceSettings.RegistrationKey == "" {
+		var tokenGenerationError error
+		deviceSettings.RegistrationKey, tokenGenerationError = newDeviceToken()
+		if tokenGenerationError != nil {
+			return nil, tokenGenerationError
 		}
 	}
-	if decoded, err := hex.DecodeString(settings.RegistrationKey); err != nil || len(decoded) != 16 {
-		return nil, fmt.Errorf("invalid device registration key in %s", path)
+	// Decode and validate the saved registration key.
+	decodedKey, registrationKeyDecodingError := hex.DecodeString(deviceSettings.RegistrationKey)
+	if registrationKeyDecodingError != nil || len(decodedKey) != 16 {
+		return nil, fmt.Errorf("invalid device registration key in %s", settingsPath)
 	}
-	if settings.CoordinatorAddress != "" {
-		if err := validateCoordinatorAddress(settings.CoordinatorAddress); err != nil {
-			return nil, err
+	// Validate a saved remote coordinator address before using it.
+	if deviceSettings.CoordinatorAddress != "" {
+		if addressValidationError := validateCoordinatorAddress(deviceSettings.CoordinatorAddress); addressValidationError != nil {
+			return nil, addressValidationError
 		}
 	}
-	name, err := os.Hostname()
-	if err != nil {
-		return nil, err
+	// Read the computer name shown to other registered devices.
+	deviceName, deviceHostnameReadingError := os.Hostname()
+	if deviceHostnameReadingError != nil {
+		return nil, deviceHostnameReadingError
 	}
-	serviceCtx, cancel := context.WithCancel(ctx)
-	registry := &DeviceRegistry{db: db, settings: settings, settingsPath: path, name: name, port: port, started: time.Now().UnixNano(), ctx: serviceCtx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{})}
-	if err := registry.saveSettingsLocked(settings); err != nil {
-		cancel()
-		return nil, err
+	// Create a cancellable context for the background registration service.
+	serviceContext, cancelService := context.WithCancel(applicationContext)
+	// Create the registry with its saved identity and runtime channels.
+	registry := &DeviceRegistry{database: database, settings: deviceSettings, settingsPath: settingsPath, name: deviceName, port: serverPort, started: time.Now().UnixNano(), serviceContext: serviceContext, cancelService: cancelService, wakeSignal: make(chan struct{}, 1), doneSignal: make(chan struct{})}
+	// Save the complete settings so a new key survives future restarts.
+	if settingsSavingError := registry.saveSettingsLocked(deviceSettings); settingsSavingError != nil {
+		cancelService()
+		return nil, settingsSavingError
 	}
+	// Start registration and heartbeat work in the background.
 	go registry.run()
+	// Return the ready registry to the application.
 	return registry, nil
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// saveSettingsLocked writes settings through a temporary file before renaming
+// it, preventing a partial write from corrupting the saved device identity.
 func (registry *DeviceRegistry) saveSettingsLocked(settings DeviceSettings) error {
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return err
+	// Create readable JSON for the local settings file.
+	settingsData, settingsEncodingError := json.MarshalIndent(settings, "", "  ")
+	if settingsEncodingError != nil {
+		return settingsEncodingError
 	}
-	file, err := os.CreateTemp(filepath.Dir(registry.settingsPath), ".filesync-device-*.tmp")
-	if err != nil {
-		return err
+	// Create a temporary file beside the final settings file.
+	temporaryFile, settingsTemporaryFileCreationError := os.CreateTemp(filepath.Dir(registry.settingsPath), ".filesync-device-*.tmp")
+	if settingsTemporaryFileCreationError != nil {
+		return settingsTemporaryFileCreationError
 	}
-	defer os.Remove(file.Name())
-	_, writeErr := file.Write(data)
-	closeErr := file.Close()
-	if writeErr != nil {
-		return writeErr
+	// Remove the temporary file if any later step fails.
+	defer os.Remove(temporaryFile.Name())
+	// Write the settings and close the temporary file.
+	_, settingsWritingError := temporaryFile.Write(settingsData)
+	temporaryFileClosingError := temporaryFile.Close()
+	// Return a writing error before replacing the saved settings.
+	if settingsWritingError != nil {
+		return settingsWritingError
 	}
-	if closeErr != nil {
-		return closeErr
+	// Return a closing error because buffered data may not be complete.
+	if temporaryFileClosingError != nil {
+		return temporaryFileClosingError
 	}
-	return os.Rename(file.Name(), registry.settingsPath)
+	// Atomically replace the old settings file with the completed file.
+	return os.Rename(temporaryFile.Name(), registry.settingsPath)
 }
 
-//Rabindra Neupane
-func validateCoordinatorAddress(address string) error {
-	host, portText, err := net.SplitHostPort(address)
-	if err != nil || host == "" || strings.ContainsAny(host, "/\\?#@ \t\r\n") {
+// Rabindra Neupane
+// validateCoordinatorAddress accepts one host and TCP port and rejects paths,
+// credentials, whitespace, and invalid port numbers.
+func validateCoordinatorAddress(coordinatorAddress string) error {
+	// Split the address and reject unsafe host text or missing values.
+	hostName, portText, coordinatorAddressParsingError := net.SplitHostPort(coordinatorAddress)
+	if coordinatorAddressParsingError != nil || hostName == "" || strings.ContainsAny(hostName, "/\\?#@ \t\r\n") {
 		return fmt.Errorf("enter a coordinator address as IP:port, for example 192.168.1.10:8080")
 	}
-	port, err := strconv.Atoi(portText)
-	if err != nil || port < 1 || port > 65535 {
+	// Convert the port text and check the valid TCP port range.
+	portNumber, coordinatorPortParsingError := strconv.Atoi(portText)
+	if coordinatorPortParsingError != nil || portNumber < 1 || portNumber > 65535 {
 		return fmt.Errorf("invalid coordinator port")
 	}
+	// Return success after both host and port pass validation.
 	return nil
 }
 
-//Rabindra Neupane
-func (registry *DeviceRegistry) Configure(coordinator bool, address string) error {
-	address = strings.TrimSpace(address)
-	if coordinator {
-		address = ""
-	} else if err := validateCoordinatorAddress(address); err != nil {
-		return err
+// Rabindra Neupane
+// Configure switches coordinator mode or selects a remote coordinator. Changing
+// coordinators clears the old assigned ID so the new coordinator can register it.
+func (registry *DeviceRegistry) Configure(isCoordinator bool, coordinatorAddress string) error {
+	// Normalize the value entered by the user.
+	coordinatorAddress = strings.TrimSpace(coordinatorAddress)
+	// Clear the address in coordinator mode or validate a remote address.
+	if isCoordinator {
+		coordinatorAddress = ""
+	} else if coordinatorAddressValidationError := validateCoordinatorAddress(coordinatorAddress); coordinatorAddressValidationError != nil {
+		return coordinatorAddressValidationError
 	}
+	// Lock the registry while changing and saving its configuration.
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
-	settings := registry.settings
-	if coordinator != settings.Coordinator || address != settings.CoordinatorAddress {
-		settings.DeviceID = ""
+	// Copy the current settings before applying the requested changes.
+	updatedSettings := registry.settings
+	// Clear the assigned ID when switching to a different coordinator.
+	if isCoordinator != updatedSettings.Coordinator || coordinatorAddress != updatedSettings.CoordinatorAddress {
+		updatedSettings.DeviceID = ""
 	}
-	settings.Coordinator, settings.CoordinatorAddress = coordinator, address
-	if err := registry.saveSettingsLocked(settings); err != nil {
-		return err
+	// Store the selected role and coordinator address in the copied settings.
+	updatedSettings.Coordinator, updatedSettings.CoordinatorAddress = isCoordinator, coordinatorAddress
+	// Save the updated settings before exposing them to the running service.
+	if settingsSavingError := registry.saveSettingsLocked(updatedSettings); settingsSavingError != nil {
+		return settingsSavingError
 	}
-	registry.settings = settings
+	// Reset registration state so the background service registers again.
+	registry.settings = updatedSettings
 	registry.generation++
 	registry.registered = false
 	registry.lastError = "Registering..."
+	// Wake the background service without blocking if it is already awake.
 	select {
-	case registry.wake <- struct{}{}:
+	case registry.wakeSignal <- struct{}{}:
 	default:
 	}
+	// Return after the new configuration is saved and queued.
 	return nil
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// Status returns a thread-safe public snapshot without exposing the private
+// registration key.
 func (registry *DeviceRegistry) Status() RegistrationStatus {
+	// Lock settings while creating a consistent public snapshot.
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
-	address := registry.settings.CoordinatorAddress
+	coordinatorAddress := registry.settings.CoordinatorAddress
+	// Show this device's address when it is acting as coordinator.
 	if registry.settings.Coordinator {
-		address = registry.localAddress
+		coordinatorAddress = registry.localAddress
 	}
-	return RegistrationStatus{DeviceID: registry.settings.DeviceID, DeviceName: registry.name, LocalAddress: registry.localAddress, Coordinator: registry.settings.Coordinator, CoordinatorAddress: address, Configured: registry.settings.Coordinator || address != "", Registered: registry.registered, LastError: registry.lastError}
+	// Return a public copy without the private registration key.
+	return RegistrationStatus{DeviceID: registry.settings.DeviceID, DeviceName: registry.name, LocalAddress: registry.localAddress, Coordinator: registry.settings.Coordinator, CoordinatorAddress: coordinatorAddress, Configured: registry.settings.Coordinator || coordinatorAddress != "", Registered: registry.registered, LastError: registry.lastError}
 }
 
-//Rabindra Neupane
-func (registry *DeviceRegistry) Close() { registry.cancel(); <-registry.done }
+// Rabindra Neupane
+// Close stops the heartbeat service and waits for its goroutine to finish.
+func (registry *DeviceRegistry) Close() { /* Stop the service and wait for its completion signal. */ registry.cancelService(); <-registry.doneSignal }
 
-//Rabindra Neupane
-func (registry *DeviceRegistry) run() {
-	defer close(registry.done)
-	//Rabindra Neupane
-	// Send heartbeats often enough for the shorter offline timeout.
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	for {
-		registry.sendHeartbeat()
-		select {
-		case <-registry.ctx.Done():
-			return
-		case <-ticker.C:
-		case <-registry.wake:
-		}
-	}
-}
-
-//Rabindra Neupane
-func (registry *DeviceRegistry) sendHeartbeat() {
-	registry.mutex.Lock()
-	settings, generation := registry.settings, registry.generation
-	registry.mutex.Unlock()
-	if !settings.Coordinator && settings.CoordinatorAddress == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(registry.ctx, 5*time.Second)
-	defer cancel()
-	ip, err := GetLocalIP()
-	var device Device
-	if err == nil {
-		request := registrationRequest{RegistrationKey: settings.RegistrationKey, DeviceID: settings.DeviceID, Name: registry.name, Port: registry.port}
-		if settings.Coordinator {
-			device, err = registry.acceptRegistration(ctx, request, ip, false)
-		} else {
-			path := "/devices/register"
-			if request.DeviceID != "" {
-				path = "/devices/heartbeat"
-			}
-			err = registry.registryRequest(ctx, settings.CoordinatorAddress, path, request, &device)
-			if err != nil && path == "/devices/heartbeat" {
-				// Registration is idempotent by installation key, including after
-				// a coordinator restart or a previously lost registration response.
-				err = registry.registryRequest(ctx, settings.CoordinatorAddress, "/devices/register", request, &device)
-			}
-		}
-	}
-	registry.mutex.Lock()
-	defer registry.mutex.Unlock()
-	if generation != registry.generation {
-		return
-	}
-	registry.localAddress = net.JoinHostPort(ip, strconv.Itoa(registry.port))
-	if err == nil && device.DeviceID == "" {
-		err = fmt.Errorf("coordinator returned an empty device ID")
-	}
-	if err == nil && device.DeviceID != registry.settings.DeviceID {
-		next := registry.settings
-		next.DeviceID = device.DeviceID
-		if saveErr := registry.saveSettingsLocked(next); saveErr != nil {
-			err = saveErr
-		} else {
-			registry.settings = next
-		}
-	}
-	registry.registered = err == nil
-	registry.lastError = ""
-	if err != nil {
-		registry.lastError = err.Error()
-		fmt.Println("Device registration:", err)
-	}
-}
-
-//Rabindra Neupane
-func (registry *DeviceRegistry) registryRequest(ctx context.Context, address, path string, payload interface{}, result interface{}) error {
-	method := http.MethodGet
-	var body io.Reader
-	if payload != nil {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(data)
-		method = http.MethodPost
-	}
-	request, err := http.NewRequestWithContext(ctx, method, "http://"+address+path, body)
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	defer client.CloseIdleConnections()
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("coordinator unavailable: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("coordinator returned %s: %s", response.Status, strings.TrimSpace(string(detail)))
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
-	if err != nil {
-		return err
-	}
-	if len(data) > 1<<20 {
-		return fmt.Errorf("coordinator response is too large")
-	}
-	return json.Unmarshal(data, result)
-}
-
-//Rabindra Neupane
+// Rabindra Neupane
+// Handler groups the coordinator's registration, heartbeat, and device-list routes.
 func (registry *DeviceRegistry) Handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/devices/register", func(w http.ResponseWriter, r *http.Request) { registry.registrationHandler(w, r, false) })
-	mux.HandleFunc("/devices/heartbeat", func(w http.ResponseWriter, r *http.Request) { registry.registrationHandler(w, r, true) })
-	mux.HandleFunc("/devices", registry.devicesHandler)
-	return mux
+	// Create one router for registration, heartbeat, and device-list requests.
+	deviceRoutes := http.NewServeMux()
+	// Route initial registrations through the shared registration handler.
+	deviceRoutes.HandleFunc("/devices/register", func(responseWriter http.ResponseWriter, httpRequest *http.Request) {
+		registry.registrationHandler(responseWriter, httpRequest, false)
+	})
+	// Route heartbeat updates through the same handler with heartbeat checks enabled.
+	deviceRoutes.HandleFunc("/devices/heartbeat", func(responseWriter http.ResponseWriter, httpRequest *http.Request) {
+		registry.registrationHandler(responseWriter, httpRequest, true)
+	})
+	// Route device-list reads to the coordinator device handler.
+	deviceRoutes.HandleFunc("/devices", registry.devicesHandler)
+	// Return the completed device registry router.
+	return deviceRoutes
 }
 
-//Rabindra Neupane
-func (registry *DeviceRegistry) registrationHandler(w http.ResponseWriter, r *http.Request, heartbeat bool) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST")
-		http.Error(w, "Only POST requests are allowed", 405)
+// Rabindra Neupane
+// registrationHandler validates a coordinator request and derives the peer IP
+// from the connection instead of trusting an address supplied in JSON.
+func (registry *DeviceRegistry) registrationHandler(responseWriter http.ResponseWriter, httpRequest *http.Request, heartbeat bool) {
+	// Validate that registration updates use POST.
+	if httpRequest.Method != http.MethodPost {
+		responseWriter.Header().Set("Allow", "POST")
+		http.Error(responseWriter, "Only POST requests are allowed", 405)
 		return
 	}
-	var request registrationRequest
-	if err := readTransferJSON(w, r, &request); err != nil {
-		http.Error(w, "Invalid registration request", 400)
+	// Decode one strict registration request from the device.
+	var registration registrationRequest
+	if registrationRequestReadingError := readTransferJSON(responseWriter, httpRequest, &registration); registrationRequestReadingError != nil {
+		http.Error(responseWriter, "Invalid registration request", 400)
 		return
 	}
-	key, err := hex.DecodeString(request.RegistrationKey)
-	if err != nil || len(key) != 16 || request.Name == "" || len(request.Name) > 255 || request.Port < 1 || request.Port > 65535 {
-		http.Error(w, "Invalid device registration fields", 400)
+	// Decode and validate identity, name, and port fields.
+	registrationKey, registrationKeyDecodingError := hex.DecodeString(registration.RegistrationKey)
+	if registrationKeyDecodingError != nil || len(registrationKey) != 16 || registration.Name == "" || len(registration.Name) > 255 || registration.Port < 1 || registration.Port > 65535 {
+		http.Error(responseWriter, "Invalid device registration fields", 400)
 		return
 	}
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		http.Error(w, "Cannot determine peer IP", 400)
+	// Read the peer IP from the network connection instead of trusting JSON.
+	deviceIP, _, remoteAddressParsingError := net.SplitHostPort(httpRequest.RemoteAddr)
+	if remoteAddressParsingError != nil {
+		http.Error(responseWriter, "Cannot determine peer IP", 400)
 		return
 	}
-	device, err := registry.acceptRegistration(r.Context(), request, ip, heartbeat)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+	// Create or refresh the registered device in coordinator storage.
+	registeredDevice, deviceRegistrationError := registry.acceptRegistration(httpRequest.Context(), registration, deviceIP, heartbeat)
+	if deviceRegistrationError != nil {
+		http.Error(responseWriter, deviceRegistrationError.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	writeTransferJSON(w, device)
+	// Respond with the stable identity assigned to the device.
+	writeTransferJSON(responseWriter, registeredDevice)
 }
 
-//Rabindra Neupane
-func (registry *DeviceRegistry) acceptRegistration(ctx context.Context, request registrationRequest, ip string, heartbeat bool) (Device, error) {
+// Rabindra Neupane
+// acceptRegistration creates a stable device ID for a new installation or
+// refreshes the stored name, address, port, and last-seen time for a known one.
+func (registry *DeviceRegistry) acceptRegistration(requestContext context.Context, registration registrationRequest, deviceIP string, heartbeat bool) (Device, error) {
+	// Lock coordinator state and database registration updates together.
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
+	// Reject registration work when this installation is not coordinator.
 	if !registry.settings.Coordinator {
 		return Device{}, fmt.Errorf("this device is not the coordinator")
 	}
-	var id string
-	err := registry.db.QueryRowContext(ctx, "SELECT device_id FROM device_registry WHERE registration_key=?", request.RegistrationKey).Scan(&id)
-	if heartbeat && (err == sql.ErrNoRows || (err == nil && id != request.DeviceID)) {
+	// Look up an existing device by its private registration key.
+	var deviceID string
+	registrationLookupError := registry.database.QueryRowContext(requestContext, "SELECT device_id FROM device_registry WHERE registration_key=?", registration.RegistrationKey).Scan(&deviceID)
+	// Reject a heartbeat when its device is unknown or uses the wrong ID.
+	if heartbeat && (registrationLookupError == sql.ErrNoRows || (registrationLookupError == nil && deviceID != registration.DeviceID)) {
 		return Device{}, fmt.Errorf("device must register before sending heartbeats")
 	}
-	if err != nil && err != sql.ErrNoRows {
-		return Device{}, err
+	// Return unexpected database lookup errors.
+	if registrationLookupError != nil && registrationLookupError != sql.ErrNoRows {
+		return Device{}, registrationLookupError
 	}
-	if err == sql.ErrNoRows {
-		id, err = newDeviceToken()
-		if err != nil {
-			return Device{}, err
+	// Create a stable device ID for a new registration key.
+	if registrationLookupError == sql.ErrNoRows {
+		var tokenGenerationError error
+		deviceID, tokenGenerationError = newDeviceToken()
+		if tokenGenerationError != nil {
+			return Device{}, tokenGenerationError
 		}
 	}
-	now := time.Now().UnixNano()
-	_, err = registry.db.ExecContext(ctx, `INSERT INTO device_registry (registration_key,device_id,name,ip,port,last_seen)
+	// Record the current time for online and offline tracking.
+	lastSeenTime := time.Now().UnixNano()
+	// Insert a new registration or refresh the existing device details.
+	_, registrationSavingError := registry.database.ExecContext(requestContext, `INSERT INTO device_registry (registration_key,device_id,name,ip,port,last_seen)
 		VALUES (?,?,?,?,?,?) ON CONFLICT(registration_key) DO UPDATE SET name=excluded.name,
-		ip=excluded.ip,port=excluded.port,last_seen=excluded.last_seen`, request.RegistrationKey, id, request.Name, ip, request.Port, now)
-	if err != nil {
-		return Device{}, err
+		ip=excluded.ip,port=excluded.port,last_seen=excluded.last_seen`, registration.RegistrationKey, deviceID, registration.Name, deviceIP, registration.Port, lastSeenTime)
+	if registrationSavingError != nil {
+		return Device{}, registrationSavingError
 	}
-	return Device{DeviceID: id, DeviceName: request.Name, DeviceIP: ip, DevicePort: request.Port, DeviceOnline: true, LastSeen: time.Unix(0, now).UTC().Format(time.RFC3339)}, nil
+	// Return the registered device with its current online state.
+	return Device{DeviceID: deviceID, DeviceName: registration.Name, DeviceIP: deviceIP, DevicePort: registration.Port, DeviceOnline: true, LastSeen: time.Unix(0, lastSeenTime).UTC().Format(time.RFC3339)}, nil
 }
 
-//Rabindra Neupane
-func (registry *DeviceRegistry) devicesHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		http.Error(w, "Only GET requests are allowed", 405)
+// Rabindra Neupane
+// devicesHandler returns the coordinator's current registered-device view.
+func (registry *DeviceRegistry) devicesHandler(responseWriter http.ResponseWriter, httpRequest *http.Request) {
+	// Validate that device-list requests use GET.
+	if httpRequest.Method != http.MethodGet {
+		responseWriter.Header().Set("Allow", "GET")
+		http.Error(responseWriter, "Only GET requests are allowed", 405)
 		return
 	}
-	devices, err := registry.readRegistry(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), 503)
+	// Read the latest registered-device list from coordinator storage.
+	registeredDevices, deviceRegistryReadingError := registry.readRegistry(httpRequest.Context())
+	if deviceRegistryReadingError != nil {
+		http.Error(responseWriter, deviceRegistryReadingError.Error(), 503)
 		return
 	}
-	writeTransferJSON(w, devices)
+	// Respond with the current device list.
+	writeTransferJSON(responseWriter, registeredDevices)
 }
 
-//Rabindra Neupane
-func (registry *DeviceRegistry) readRegistry(ctx context.Context) ([]Device, error) {
+// Rabindra Neupane
+// readRegistry builds the device list and calculates availability from recent
+// heartbeats. Entries from a previous coordinator run remain visible but offline.
+func (registry *DeviceRegistry) readRegistry(requestContext context.Context) ([]Device, error) {
+	// Lock coordinator state while reading and classifying registrations.
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
+	// Reject local registry reads when this device is not coordinator.
 	if !registry.settings.Coordinator {
 		return nil, fmt.Errorf("this device is not the coordinator")
 	}
-	rows, err := registry.db.QueryContext(ctx, "SELECT device_id,name,ip,port,last_seen FROM device_registry ORDER BY name,device_id")
-	if err != nil {
-		return nil, err
+	// Query all saved devices in a stable display order.
+	deviceRows, deviceRegistryQueryError := registry.database.QueryContext(requestContext, "SELECT device_id,name,ip,port,last_seen FROM device_registry ORDER BY name,device_id")
+	if deviceRegistryQueryError != nil {
+		return nil, deviceRegistryQueryError
 	}
-	defer rows.Close()
-	devices := make([]Device, 0)
-	//Rabindra Neupane
-	// Mark devices offline after 15 seconds without a heartbeat.
-	cutoff := time.Now().Add(-15 * time.Second).UnixNano()
-	for rows.Next() {
+	// Close the database rows after the device list is built.
+	defer deviceRows.Close()
+	// Create the result list and calculate the online cutoff.
+	registeredDevices := make([]Device, 0)
+	// Calculate the cutoff used to mark devices offline after missed heartbeats.
+	offlineCutoff := time.Now().Add(-15 * time.Second).UnixNano()
+	// Read and classify every saved device record.
+	for deviceRows.Next() {
+		// Scan one database row into a public device record.
 		var device Device
-		var seen int64
-		if err := rows.Scan(&device.DeviceID, &device.DeviceName, &device.DeviceIP, &device.DevicePort, &seen); err != nil {
-			return nil, err
+		var lastSeenTime int64
+		if deviceRowScanningError := deviceRows.Scan(&device.DeviceID, &device.DeviceName, &device.DeviceIP, &device.DevicePort, &lastSeenTime); deviceRowScanningError != nil {
+			return nil, deviceRowScanningError
 		}
-		device.DeviceOnline = seen >= cutoff && seen >= registry.started
-		device.LastSeen = time.Unix(0, seen).UTC().Format(time.RFC3339)
+		// Calculate availability and coordinator role from saved timestamps and IDs.
+		device.DeviceOnline = lastSeenTime >= offlineCutoff && lastSeenTime >= registry.started
+		device.LastSeen = time.Unix(0, lastSeenTime).UTC().Format(time.RFC3339)
 		device.Coordinator = device.DeviceID == registry.settings.DeviceID
-		devices = append(devices, device)
+		registeredDevices = append(registeredDevices, device)
 	}
-	return devices, rows.Err()
+	// Return the device list and any final database iteration error.
+	return registeredDevices, deviceRows.Err()
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// Devices reads locally when this installation is the coordinator; otherwise it
+// asks the configured coordinator for the same device list.
 func (registry *DeviceRegistry) Devices() ([]Device, error) {
-	status := registry.Status()
-	ctx, cancel := context.WithTimeout(registry.ctx, 5*time.Second)
-	defer cancel()
-	if status.Coordinator {
-		return registry.readRegistry(ctx)
+	// Read the current role and coordinator address.
+	registrationStatus := registry.Status()
+	// Limit the local or remote device-list request.
+	requestContext, cancelRequest := context.WithTimeout(registry.serviceContext, 5*time.Second)
+	defer cancelRequest()
+	// Read directly from storage when this device is coordinator.
+	if registrationStatus.Coordinator {
+		return registry.readRegistry(requestContext)
 	}
-	if !status.Configured {
+	// Require a coordinator selection before making a remote request.
+	if !registrationStatus.Configured {
 		return nil, fmt.Errorf("select a coordinator first")
 	}
-	var devices []Device
-	if err := registry.registryRequest(ctx, status.CoordinatorAddress, "/devices", nil, &devices); err != nil {
-		return nil, err
+	// Ask the selected coordinator for its registered-device list.
+	var registeredDevices []Device
+	deviceListRequestError := registry.registryRequest(requestContext, registrationStatus.CoordinatorAddress, "/devices", nil, &registeredDevices)
+	if deviceListRequestError != nil {
+		return nil, deviceListRequestError
 	}
-	if devices == nil {
-		devices = make([]Device, 0)
+	// Return an empty list instead of a nil value when no devices exist.
+	if registeredDevices == nil {
+		registeredDevices = make([]Device, 0)
 	}
-	return devices, nil
-}
-
-//Rabindra Neupane
-// SetChunkLocationStore connects the metadata implementation without owning its schema.
-func (registry *DeviceRegistry) SetChunkLocationStore(store ChunkLocationStore) {
-	registry.mutex.Lock()
-	defer registry.mutex.Unlock()
-	registry.chunkLocations = store
-}
-
-//Rabindra Neupane
-func validLocationHash(hash string) bool {
-	decoded, err := hex.DecodeString(hash)
-	return err == nil && len(decoded) == 32 && hash == strings.ToLower(hash)
-}
-
-//Rabindra Neupane
-func (registry *DeviceRegistry) reportChunks(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", "POST")
-		http.Error(w, "Only POST requests are allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var report ChunkReport
-	if err := readTransferJSON(w, r, &report); err != nil || report.DeviceID == "" || report.RegistrationKey == "" || report.ChunkHashes == nil {
-		http.Error(w, "Provide deviceId, registrationKey and chunkHashes (use [] to clear inventory)", http.StatusBadRequest)
-		return
-	}
-	hashes := make([]string, 0, len(report.ChunkHashes))
-	seen := make(map[string]bool)
-	for _, hash := range report.ChunkHashes {
-		if !validLocationHash(hash) {
-			http.Error(w, "Chunk hashes must be lowercase SHA-256 hexadecimal strings", http.StatusBadRequest)
-			return
-		}
-		if !seen[hash] {
-			hashes = append(hashes, hash)
-			seen[hash] = true
-		}
-	}
-	registry.mutex.Lock()
-	defer registry.mutex.Unlock()
-	if !registry.settings.Coordinator || registry.chunkLocations == nil {
-		http.Error(w, "Coordinator chunk-location storage is not connected", http.StatusServiceUnavailable)
-		return
-	}
-	var id string
-	err := registry.db.QueryRowContext(r.Context(), "SELECT device_id FROM device_registry WHERE registration_key=?", report.RegistrationKey).Scan(&id)
-	if err == sql.ErrNoRows || (err == nil && id != report.DeviceID) {
-		http.Error(w, "Register this device before reporting chunks", http.StatusForbidden)
-		return
-	}
-	if err != nil {
-		http.Error(w, "Cannot verify registered device", http.StatusInternalServerError)
-		return
-	}
-	if err := registry.chunkLocations.ReplaceDeviceChunks(r.Context(), id, hashes); err != nil {
-		http.Error(w, "Cannot save chunk inventory", http.StatusInternalServerError)
-		return
-	}
-	writeTransferJSON(w, struct {
-		Accepted   bool `json:"accepted"`
-		ChunkCount int  `json:"chunkCount"`
-	}{true, len(hashes)})
-}
-
-//Rabindra Neupane
-func (registry *DeviceRegistry) locateChunk(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		http.Error(w, "Only GET requests are allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	hash := r.URL.Query().Get("hash")
-	if !validLocationHash(hash) {
-		http.Error(w, "Provide a lowercase SHA-256 hash", http.StatusBadRequest)
-		return
-	}
-	registry.mutex.Lock()
-	store, coordinator := registry.chunkLocations, registry.settings.Coordinator
-	registry.mutex.Unlock()
-	if !coordinator || store == nil {
-		http.Error(w, "Coordinator chunk-location storage is not connected", http.StatusServiceUnavailable)
-		return
-	}
-	ids, err := store.DeviceIDsForChunk(r.Context(), hash)
-	if err != nil {
-		http.Error(w, "Cannot look up chunk locations", http.StatusInternalServerError)
-		return
-	}
-	devices, err := registry.readRegistry(r.Context())
-	if err != nil {
-		http.Error(w, "Cannot read registered devices", http.StatusServiceUnavailable)
-		return
-	}
-	holders := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		holders[id] = true
-	}
-	result := ChunkLocations{ChunkHash: hash, Devices: make([]Device, 0)}
-	for _, device := range devices {
-		if device.DeviceOnline && holders[device.DeviceID] {
-			result.Devices = append(result.Devices, device)
-		}
-	}
-	writeTransferJSON(w, result)
+	// Return the coordinator's validated device list.
+	return registeredDevices, nil
 }

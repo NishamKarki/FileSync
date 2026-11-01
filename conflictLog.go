@@ -7,8 +7,7 @@ import (
 	"fmt"
 )
 
-// One detected conflict, as the conflict window will show it.
-// The json names are what the frontend (TypeScript) will see.
+// ConflictRecord contains the conflict information shown in the frontend.
 type ConflictRecord struct {
 	ID             int64  `json:"id"`
 	FileID         string `json:"fileId"`
@@ -20,45 +19,35 @@ type ConflictRecord struct {
 	DetectedAt     string `json:"detectedAt"`
 }
 
-// Saves a newly detected conflict so the user can be told about it.
-// If this exact conflict (same file, same two versions) was recorded before,
-// it is not saved again, whether it is still open or already resolved:
-//   - still open: the user already knows about it (a transfer was retried)
-//   - resolved: the user already decided, so we don't ask again
+// RecordConflict saves a newly detected conflict.
+// Repeated transfers of the same two versions do not create duplicate records.
 func RecordConflict(database *sql.DB, conflict ConflictRecord) error {
-
-	// Has this exact conflict been recorded before?
-	var existingCount int
-	checkError := database.QueryRow(
+	var existingConflictCount int
+	conflictCheckError := database.QueryRow(
 		`SELECT COUNT(*) FROM conflicts
 		 WHERE file_id = ? AND local_hash = ? AND incoming_hash = ?`,
 		conflict.FileID, conflict.LocalHash, conflict.IncomingHash,
-	).Scan(&existingCount)
-	if checkError != nil {
-		return checkError
+	).Scan(&existingConflictCount)
+	if conflictCheckError != nil {
+		return conflictCheckError
 	}
-	if existingCount > 0 {
+	if existingConflictCount > 0 {
 		return nil
 	}
 
-	// New conflict: save it. detected_at and status fill in automatically.
-	_, insertError := database.Exec(
+	_, conflictInsertError := database.Exec(
 		`INSERT INTO conflicts
 		 (file_id, local_hash, incoming_hash, base_hash, sender_device_id, conflict_copy)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		conflict.FileID, conflict.LocalHash, conflict.IncomingHash,
 		conflict.BaseHash, conflict.SenderDeviceID, conflict.ConflictCopy,
 	)
-	return insertError
+	return conflictInsertError
 }
 
-// Returns the conflicts the user hasn't resolved yet, newest first.
+// ListOpenConflicts returns unresolved conflicts with the newest one first.
 func ListOpenConflicts(database *sql.DB) ([]ConflictRecord, error) {
-
-	// COALESCE turns NULL into "", because a Go string can't hold NULL.
-	// strftime writes the time in a standard format ending in Z (UTC),
-	// so the screen can convert it to the user's local time.
-	rows, queryError := database.Query(
+	conflictRows, conflictQueryError := database.Query(
 		`SELECT id, file_id, local_hash, incoming_hash,
 		        COALESCE(base_hash, ''), COALESCE(sender_device_id, ''),
 		        conflict_copy, strftime('%Y-%m-%dT%H:%M:%SZ', detected_at)
@@ -66,38 +55,32 @@ func ListOpenConflicts(database *sql.DB) ([]ConflictRecord, error) {
 		 WHERE status = 'open'
 		 ORDER BY id DESC`,
 	)
-	if queryError != nil {
-		return nil, queryError
+	if conflictQueryError != nil {
+		return nil, conflictQueryError
 	}
-	defer rows.Close()
+	defer conflictRows.Close()
 
-	// Start with an empty list (not nil), so the screen gets [] when there
-	// are no conflicts instead of null.
 	openConflicts := make([]ConflictRecord, 0)
-
-	for rows.Next() {
+	for conflictRows.Next() {
 		var conflict ConflictRecord
-		scanError := rows.Scan(
+		conflictScanError := conflictRows.Scan(
 			&conflict.ID, &conflict.FileID, &conflict.LocalHash, &conflict.IncomingHash,
 			&conflict.BaseHash, &conflict.SenderDeviceID,
 			&conflict.ConflictCopy, &conflict.DetectedAt,
 		)
-		if scanError != nil {
-			return nil, scanError
+		if conflictScanError != nil {
+			return nil, conflictScanError
 		}
 		openConflicts = append(openConflicts, conflict)
 	}
 
-	return openConflicts, rows.Err()
+	return openConflicts, conflictRows.Err()
 }
 
-// Returns one conflict that is still waiting for the user's decision.
-// Returns an error if it doesn't exist or was already resolved, so the same
-// conflict can't be resolved twice (for example, by a double click).
+// GetOpenConflict returns one conflict that has not already been resolved.
 func GetOpenConflict(database *sql.DB, conflictID int64) (ConflictRecord, error) {
-
 	var conflict ConflictRecord
-	queryError := database.QueryRow(
+	conflictQueryError := database.QueryRow(
 		`SELECT id, file_id, local_hash, incoming_hash,
 		        COALESCE(base_hash, ''), COALESCE(sender_device_id, ''),
 		        conflict_copy, strftime('%Y-%m-%dT%H:%M:%SZ', detected_at)
@@ -109,55 +92,46 @@ func GetOpenConflict(database *sql.DB, conflictID int64) (ConflictRecord, error)
 		&conflict.BaseHash, &conflict.SenderDeviceID,
 		&conflict.ConflictCopy, &conflict.DetectedAt,
 	)
-	if queryError == sql.ErrNoRows {
+	if conflictQueryError == sql.ErrNoRows {
 		return conflict, fmt.Errorf("conflict %d was not found or is already resolved", conflictID)
 	}
-	return conflict, queryError
+	return conflict, conflictQueryError
 }
 
-// Saves the user's decision for a conflict. In one transaction it:
-//   - marks the conflict resolved, with the user's choice and the time
-//   - sets the file's base to the incoming version's hash. This records
-//     "I have seen the other device's version and decided", so the next
-//     sync with that device settles instead of conflicting again.
-//
-// Either both changes are saved or neither is.
+// MarkConflictResolved records the user's decision and advances the shared base
+// to the incoming version that the user has now reviewed.
 func MarkConflictResolved(database *sql.DB, conflict ConflictRecord, resolution string) error {
-
-	transaction, beginError := database.Begin()
-	if beginError != nil {
-		return beginError
+	databaseTransaction, transactionStartError := database.Begin()
+	if transactionStartError != nil {
+		return transactionStartError
 	}
-	// Undoes everything if the function returns before Commit.
-	// After a successful Commit it does nothing.
-	defer transaction.Rollback()
+	defer databaseTransaction.Rollback()
 
-	// Only an open conflict can be resolved
-	updateResult, updateError := transaction.Exec(
+	conflictUpdateResult, conflictUpdateError := databaseTransaction.Exec(
 		`UPDATE conflicts
 		 SET status = 'resolved', resolution = ?, resolved_at = CURRENT_TIMESTAMP
 		 WHERE id = ? AND status = 'open'`,
 		resolution, conflict.ID,
 	)
-	if updateError != nil {
-		return updateError
+	if conflictUpdateError != nil {
+		return conflictUpdateError
 	}
-	changedRows, countError := updateResult.RowsAffected()
-	if countError != nil {
-		return countError
+
+	updatedConflictCount, affectedRowsError := conflictUpdateResult.RowsAffected()
+	if affectedRowsError != nil {
+		return affectedRowsError
 	}
-	if changedRows != 1 {
+	if updatedConflictCount != 1 {
 		return fmt.Errorf("conflict %d was not found or is already resolved", conflict.ID)
 	}
 
-	// The incoming version becomes the base for this file
-	_, baseError := transaction.Exec(
+	_, baseHashUpdateError := databaseTransaction.Exec(
 		"UPDATE files SET last_synced_hash = ? WHERE id = ?",
 		conflict.IncomingHash, conflict.FileID,
 	)
-	if baseError != nil {
-		return baseError
+	if baseHashUpdateError != nil {
+		return baseHashUpdateError
 	}
 
-	return transaction.Commit()
+	return databaseTransaction.Commit()
 }

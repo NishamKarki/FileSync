@@ -1,4 +1,4 @@
-// /Rabindra Neupane
+// Author: Rabindra Neupane
 package network
 
 import (
@@ -6,42 +6,42 @@ import (
 	"net"
 )
 
-// GetLocalIP retrieves the local IP address of the machine
+// Rabindra Neupane
+// GetLocalIP finds the local address used to reach devices on the network.
 func GetLocalIP() (string, error) {
-	connection, connectionErr := net.Dial("udp", "8.8.8.8:80")
-	// Check for error during connection
-	if connectionErr != nil {
-		return "", connectionErr
+	// Create a UDP route only to learn which local interface is active.
+	connection, networkDialError := net.Dial("udp", "8.8.8.8:80")
+	// Check whether an active network route is available.
+	if networkDialError != nil {
+		return "", networkDialError
 	}
+	// Close the temporary route after reading its local address.
 	defer connection.Close()
-	// Get the local address from the connection
+	// Read the local IP selected by the operating system.
 	localAddress := connection.LocalAddr().(*net.UDPAddr)
-	//Rabindra Neupane
 	// Return the address without printing on every heartbeat.
 	return localAddress.IP.String(), nil
 }
 
-// DiscoverDevices discovers devices on the local network
+// Rabindra Neupane
+// DiscoverDevices scans the local IPv4 subnet for FileSync ping responses.
 func DiscoverDevices() []Device {
-	// Implementation for device discovery
-	localIP, localIPErr := GetLocalIP()
-	if localIPErr != nil {
-		fmt.Println("Could not get local IP address:", localIPErr)
+	// Read the active local IP before building the subnet range.
+	localIP, localIPLookupError := GetLocalIP()
+	if localIPLookupError != nil {
+		fmt.Println("Could not get local IP address:", localIPLookupError)
 		return []Device{}
 	}
-	// Parse the local IP address to get the network prefix
+	// Validate that the address can be scanned as IPv4.
 	localIP4 := net.ParseIP(localIP).To4()
 	if localIP4 == nil {
 		fmt.Println("Could not parse local IPv4 address:", localIP)
 		return []Device{}
 	}
 
-	//Rabindra Neupane
-	// Scanning only discovers peers; coordinator heartbeats own registry status.
-
-	//channel to collect the results from the ping goroutines
+	// Create a buffered result channel so every scan can finish independently.
 	results := make(chan Device, 254)
-	// Scan the local network for devices
+	// Create one ping task for every possible address on the local subnet.
 	for i := 1; i <= 254; i++ {
 		deviceIP := fmt.Sprintf(
 			"%d.%d.%d.%d",
@@ -50,19 +50,18 @@ func DiscoverDevices() []Device {
 			localIP4[2],
 			i)
 
-		// Skip the local device itself
+		// Skip this computer because it is already known.
 		if deviceIP == localIP {
 			continue
 		}
 
 		go func(deviceIP string) {
-			// Ping the device at the specified port 8080
+			// Check the standard FileSync port on this address.
 			deviceAddress := deviceIP + ":8080"
-			response, pingErr := PingDevice(deviceAddress)
-			// Check if the ping was successful and the device is online
-			if pingErr == nil && response.Success {
+			response, devicePingError := PingDevice(deviceAddress)
+			// Save a complete device record only for a valid FileSync response.
+			if devicePingError == nil && response.Success {
 				device := Device{
-					//Rabindra Neupane
 					DeviceID:     response.DeviceID,
 					Coordinator:  response.Coordinator,
 					DeviceName:   response.DeviceName,
@@ -75,19 +74,22 @@ func DiscoverDevices() []Device {
 				results <- device
 				return
 			}
-			// If the ping failed or the device is offline, send an empty string to the results channel
+			// Respond with an empty record so the collection loop still completes.
 			results <- Device{}
 		}(deviceIP)
 	}
-	// Collect the results from the goroutines
+	// Create the final list of discovered devices.
 	devices := make([]Device, 0)
-	// Wait for all goroutines to finish and collect the results
+	// Read one result for every remote address that was scanned.
 	for index := 0; index < 253; index++ {
+		// Wait for the next scan result from a remote address.
 		device := <-results
+		// Keep only addresses that returned a valid FileSync device.
 		if device.DeviceIP != "" {
 			devices = append(devices, device)
 		}
 	}
 
+	// Return every FileSync device found on the local subnet.
 	return devices
 }

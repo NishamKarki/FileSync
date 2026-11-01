@@ -1,4 +1,4 @@
-// /Rabindra Neupane
+// Author: Rabindra Neupane
 package network
 
 import (
@@ -14,298 +14,288 @@ import (
 	"time"
 )
 
-//Rabindra Neupane
+// Rabindra Neupane
 // StartChunkTransfer creates an isolated receiver snapshot and returns the
 // chunks needed there. Existing comparison-only requests remain read-only.
-func StartChunkTransfer(ctx context.Context, address string, metadata FileMetadata) (*TransferPlan, error) {
-	if err := validateFileMetadata(metadata); err != nil {
-		return nil, err
+func StartChunkTransfer(requestContext context.Context, deviceAddress string, metadata FileMetadata) (*TransferPlan, error) {
+	// Validate the metadata before sending it to another device.
+	if metadataValidationError := validateFileMetadata(metadata); metadataValidationError != nil {
+		return nil, metadataValidationError
 	}
+	// Check the declared chunk size before creating the request body.
 	if metadata.ChunkSize > maxTransferChunkSize {
 		return nil, fmt.Errorf("chunk size exceeds 16 MiB transfer limit")
 	}
-	body, err := json.Marshal(metadata)
-	if err != nil {
-		return nil, err
+	// Create the JSON request used to start the transfer.
+	requestBody, metadataEncodingError := json.Marshal(metadata)
+	if metadataEncodingError != nil {
+		return nil, metadataEncodingError
 	}
-	var result TransferPlan
-	if err := transferRequest(ctx, address, "/transfer/start", "application/json", body, &result); err != nil {
-		return nil, err
+	// Send the metadata and read the receiver's transfer plan.
+	var transferPlan TransferPlan
+	transferStartRequestError := transferRequest(requestContext, deviceAddress, "/transfer/start", "application/json", requestBody, &transferPlan)
+	if transferStartRequestError != nil {
+		return nil, transferStartRequestError
 	}
-	if result.TransferID == "" || result.NeededChunks == nil {
+	// Validate the transfer ID and missing-chunk list returned by the receiver.
+	if transferPlan.TransferID == "" || transferPlan.NeededChunks == nil {
 		return nil, fmt.Errorf("invalid transfer plan")
 	}
-	seen := make(map[int]bool)
-	for _, index := range result.NeededChunks {
-		if index < 0 || index >= len(metadata.ChunkHashes) || seen[index] {
+	// Check every requested index once so a bad response cannot read the wrong chunk.
+	seenChunkIndexes := make(map[int]bool)
+	for _, chunkIndex := range transferPlan.NeededChunks {
+		// Reject an out-of-range or repeated chunk index.
+		if chunkIndex < 0 || chunkIndex >= len(metadata.ChunkHashes) || seenChunkIndexes[chunkIndex] {
 			return nil, fmt.Errorf("invalid needed chunk index")
 		}
-		seen[index] = true
+		seenChunkIndexes[chunkIndex] = true
 	}
-	return &result, nil
+	// Return the receiver's validated transfer plan.
+	return &transferPlan, nil
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // SendTransferChunk stores one chunk in the transfer folder without reconstructing.
-func SendTransferChunk(ctx context.Context, address, transferID string, index int, data []byte) error {
-	query := url.Values{"transferId": {transferID}, "chunkIndex": {fmt.Sprint(index)}}
-	return transferRequest(ctx, address, "/transfer/chunk?"+query.Encode(), "application/octet-stream", data, nil)
+func SendTransferChunk(requestContext context.Context, deviceAddress, transferID string, chunkIndex int, chunkData []byte) error {
+	// Create query values that identify the transfer and chunk position.
+	queryParameters := url.Values{"transferId": {transferID}, "chunkIndex": {fmt.Sprint(chunkIndex)}}
+	// Send the raw chunk bytes to the receiver's isolated staging folder.
+	return transferRequest(requestContext, deviceAddress, "/transfer/chunk?"+queryParameters.Encode(), "application/octet-stream", chunkData, nil)
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // CompleteChunkTransfer succeeds only after the receiver verifies and reconstructs.
-func CompleteChunkTransfer(ctx context.Context, address, transferID, expectedHash string) error {
-	body, err := json.Marshal(struct {
+func CompleteChunkTransfer(requestContext context.Context, deviceAddress, transferID, expectedHash string) error {
+	// Create the completion request for the active transfer.
+	requestBody, completionRequestEncodingError := json.Marshal(struct {
 		TransferID string `json:"transferId"`
 	}{transferID})
-	if err != nil {
-		return err
+	if completionRequestEncodingError != nil {
+		return completionRequestEncodingError
 	}
-	var result TransferCompletion
-	if err := transferRequest(ctx, address, "/transfer/complete", "application/json", body, &result); err != nil {
-		return err
+	// Send the completion request and decode the receiver's decision.
+	var completionResult TransferCompletion
+	transferCompletionRequestError := transferRequest(requestContext, deviceAddress, "/transfer/complete", "application/json", requestBody, &completionResult)
+	if transferCompletionRequestError != nil {
+		return transferCompletionRequestError
 	}
-	//Rabindra Neupane
-	if result.TransferID == transferID && !result.Completed && result.KeepLocal {
+	// Respond to a newer receiver version without treating it as data loss.
+	if completionResult.TransferID == transferID && !completionResult.Completed && completionResult.KeepLocal {
 		return &KeepLocalError{}
 	}
-	if result.TransferID == transferID && !result.Completed && result.ConflictFile != "" {
-		return &SyncConflictError{ConflictFile: result.ConflictFile}
+	// Report a preserved conflict copy when both devices changed the file.
+	if completionResult.TransferID == transferID && !completionResult.Completed && completionResult.ConflictFile != "" {
+		return &SyncConflictError{ConflictFile: completionResult.ConflictFile}
 	}
-	if result.TransferID != transferID || !result.Completed || result.FileHash != expectedHash {
+	// Verify the transfer ID, completion flag, and final file hash.
+	if completionResult.TransferID != transferID || !completionResult.Completed || completionResult.FileHash != expectedHash {
 		return fmt.Errorf("receiver did not confirm completion")
 	}
+	// Return success after the receiver confirms the expected file.
 	return nil
 }
 
-//Rabindra Neupane
-func transferRequest(ctx context.Context, address, path, contentType string, body []byte, result interface{}) error {
-	limit := 8 << 20
+// Rabindra Neupane
+// transferRequest sends one bounded transfer request and validates one optional
+// JSON response. Redirects are disabled so data cannot be sent to another host.
+func transferRequest(requestContext context.Context, deviceAddress, requestPath, contentType string, requestBody []byte, responseResult interface{}) error {
+	// Select a larger limit only for raw chunk data.
+	requestSizeLimit := 8 << 20
 	if contentType == "application/octet-stream" {
-		limit = maxTransferChunkSize
+		requestSizeLimit = maxTransferChunkSize
 	}
-	if len(body) > limit {
+	// Reject a request body that exceeds the selected safety limit.
+	if len(requestBody) > requestSizeLimit {
 		return fmt.Errorf("transfer request exceeds size limit")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+address+path, bytes.NewReader(body))
-	if err != nil {
-		return err
+	// Create the POST request for the selected transfer endpoint.
+	httpRequest, transferRequestCreationError := http.NewRequestWithContext(requestContext, http.MethodPost, "http://"+deviceAddress+requestPath, bytes.NewReader(requestBody))
+	if transferRequestCreationError != nil {
+		return transferRequestCreationError
 	}
-	request.Header.Set("Content-Type", contentType)
-	client := &http.Client{
+	// Set the body type and create a direct HTTP client with redirects disabled.
+	httpRequest.Header.Set("Content-Type", contentType)
+	httpClient := &http.Client{
 		Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	defer client.CloseIdleConnections()
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("transfer request: %w", err)
+	defer httpClient.CloseIdleConnections()
+	// Send the transfer request to the receiver.
+	httpResponse, transferRequestSendingError := httpClient.Do(httpRequest)
+	if transferRequestSendingError != nil {
+		return fmt.Errorf("transfer request: %w", transferRequestSendingError)
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		//Rabindra Neupane
-		// Keep the receiver's explanation without accepting an unbounded body.
+	defer httpResponse.Body.Close()
+	// Read and return a bounded error when the receiver rejects the request.
+	if httpResponse.StatusCode != http.StatusOK {
+		// Read a bounded error message so the receiver can explain the failure safely.
 		const errorLimit = 4096
-		detail, readErr := io.ReadAll(io.LimitReader(response.Body, errorLimit+1))
-		if readErr != nil {
-			return fmt.Errorf("transfer request failed: %s (cannot read receiver error: %v)", response.Status, readErr)
+		errorDetails, receiverErrorReadingError := io.ReadAll(io.LimitReader(httpResponse.Body, errorLimit+1))
+		if receiverErrorReadingError != nil {
+			return fmt.Errorf("transfer request failed: %s (cannot read receiver error: %v)", httpResponse.Status, receiverErrorReadingError)
 		}
-		truncated := len(detail) > errorLimit
-		if truncated {
-			detail = detail[:errorLimit]
+		// Mark an error message that was longer than the safe reading limit.
+		responseTruncated := len(errorDetails) > errorLimit
+		if responseTruncated {
+			errorDetails = errorDetails[:errorLimit]
 		}
-		message := strings.TrimSpace(string(detail))
-		if truncated {
-			message += " [truncated]"
+		// Remove surrounding whitespace from the receiver's message.
+		errorMessage := strings.TrimSpace(string(errorDetails))
+		if responseTruncated {
+			errorMessage += " [truncated]"
 		}
-		if message == "" {
-			return fmt.Errorf("transfer request failed: %s", response.Status)
+		// Return the HTTP status alone when no details were provided.
+		if errorMessage == "" {
+			return fmt.Errorf("transfer request failed: %s", httpResponse.Status)
 		}
-		return fmt.Errorf("transfer request failed: %s: %s", response.Status, message)
+		return fmt.Errorf("transfer request failed: %s: %s", httpResponse.Status, errorMessage)
 	}
-	if result == nil {
+	// Return when the caller does not expect a JSON response.
+	if responseResult == nil {
 		return nil
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
-	if err != nil {
-		return err
+	// Read the bounded JSON response into memory.
+	responseData, transferResponseReadingError := io.ReadAll(io.LimitReader(httpResponse.Body, (8<<20)+1))
+	if transferResponseReadingError != nil {
+		return transferResponseReadingError
 	}
-	if len(data) > 8<<20 {
+	// Reject a response that exceeds the allowed JSON size.
+	if len(responseData) > 8<<20 {
 		return fmt.Errorf("transfer response exceeds size limit")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(result); err != nil {
-		return err
+	// Decode one response object and reject unknown fields.
+	responseDecoder := json.NewDecoder(bytes.NewReader(responseData))
+	responseDecoder.DisallowUnknownFields()
+	if transferResponseDecodingError := responseDecoder.Decode(responseResult); transferResponseDecodingError != nil {
+		return transferResponseDecodingError
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+	// Check that the response contains only one JSON object.
+	if extraTransferResponseDataError := responseDecoder.Decode(&struct{}{}); extraTransferResponseDataError != io.EOF {
 		return fmt.Errorf("expected one transfer response")
 	}
+	// Return success after the complete response is validated.
 	return nil
 }
 
-// CompareFileMetadata asks a peer which chunks it needs. The address uses the
-// host:port format used by file transfers. This does not send file content or confirm
-// a completed synchronization. The context lets callers cancel the request.
-//Rabindra Neupane
-func CompareFileMetadata(ctx context.Context, address string, metadata FileMetadata) (*FileMetadataComparison, error) {
-	client := &http.Client{
-		Transport: &http.Transport{Proxy: nil},
-		Timeout:   30 * time.Second,
-		// Metadata must be compared by the selected peer, without redirects.
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	defer client.CloseIdleConnections()
-	return requestFileMetadata(ctx, client, address, metadata)
-}
-
-//Rabindra Neupane
-func requestFileMetadata(ctx context.Context, client *http.Client, address string, metadata FileMetadata) (*FileMetadataComparison, error) {
-	if err := validateFileMetadata(metadata); err != nil {
-		return nil, fmt.Errorf("invalid file metadata: %w", err)
-	}
-	body, err := json.Marshal(metadata)
-	if err != nil {
-		return nil, fmt.Errorf("encode file metadata: %w", err)
-	}
-	if len(body) > 8<<20 {
-		return nil, fmt.Errorf("file metadata exceeds the receiver's 8 MiB limit")
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+address+"/file-metadata", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create file metadata request: %w", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("compare file metadata: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("file metadata comparison failed: %s", response.Status)
-	}
-	// Bound the response before decoding, including any trailing data.
-	const responseLimit = 8 << 20
-	responseBody, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
-	if err != nil {
-		return nil, fmt.Errorf("read file metadata response: %w", err)
-	}
-	if len(responseBody) > responseLimit {
-		return nil, fmt.Errorf("file metadata response exceeds 8 MiB")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(responseBody))
-	decoder.DisallowUnknownFields()
-	var result FileMetadataComparison
-	if err := decoder.Decode(&result); err != nil {
-		return nil, fmt.Errorf("invalid file metadata response: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, fmt.Errorf("expected one file metadata response")
-	}
-	// Missing/null lists must not be mistaken for 'no chunks needed'.
-	if result.NeededChunks == nil {
-		return nil, fmt.Errorf("file metadata response is missing neededChunks")
-	}
-	seen := make(map[int]bool, len(result.NeededChunks))
-	for _, index := range result.NeededChunks {
-		if index < 0 || index >= len(metadata.ChunkHashes) || seen[index] {
-			return nil, fmt.Errorf("file metadata response contains an invalid or duplicate chunk index: %d", index)
-		}
-		seen[index] = true
-	}
-	return &result, nil
-}
-
-// PingDevice sends a ping request to the specified address and returns the response
-// It checks whether another FileSync device is reachable on the local network
-// The function returns the PingResponse when the device responds
-// successfully or an error if the device cannot be reached
-func PingDevice(address string) (*PingResponse, error) {
-	transport := &http.Transport{
+// Rabindra Neupane
+// PingDevice checks whether another FileSync device is reachable and returns
+// the identity information supplied by its ping endpoint.
+func PingDevice(deviceAddress string) (*PingResponse, error) {
+	// Create a direct transport so local requests do not use a proxy.
+	httpTransport := &http.Transport{
 		Proxy: nil,
 	}
 
-	// Limit the ping request to five seconds so that an offline peer
-	// does not leave device discovery waiting forever
+	// Limit the request so an offline device does not block discovery.
 	syncClient := http.Client{
-		Transport: transport,
+		Transport: httpTransport,
 		Timeout:   5 * time.Second,
 	}
-	// Send a GET request to the /ping endpoint of the specified address
-	response, pingRequestError := syncClient.Get("http://" + address + "/ping")
+	// Send the request to the device's ping endpoint.
+	httpResponse, pingRequestError := syncClient.Get("http://" + deviceAddress + "/ping")
 	if pingRequestError != nil {
 		return nil, pingRequestError
 	}
 
-	defer response.Body.Close()
+	defer httpResponse.Body.Close()
 
-	// Consider any non-200 response as a failed FileSync transfer.
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("device returned status: %s", response.Status)
+	// Check that the endpoint accepted the request.
+	if httpResponse.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("device returned status: %s", httpResponse.Status)
 	}
-	// Decode the JSON response into a PingResponse struct
+	// Read the returned device information.
 	var pingResponse PingResponse
-	responseDecodeError := json.NewDecoder(response.Body).Decode(&pingResponse)
-	if responseDecodeError != nil {
-		return nil, responseDecodeError
+	pingResponseDecodingError := json.NewDecoder(httpResponse.Body).Decode(&pingResponse)
+	if pingResponseDecodingError != nil {
+		return nil, pingResponseDecodingError
 	}
 	return &pingResponse, nil
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Whole-file comparison keeps one multipart payload but shares conflict handling.
-func SendFile(ctx context.Context, address string, metadata FileMetadata, data []byte) error {
-	if err := validateFileMetadata(metadata); err != nil {
-		return err
+func SendFile(requestContext context.Context, deviceAddress string, metadata FileMetadata, fileData []byte) error {
+	// Validate the same metadata used by incremental transfers.
+	if metadataValidationError := validateFileMetadata(metadata); metadataValidationError != nil {
+		return metadataValidationError
 	}
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	encoded, err := json.Marshal(metadata)
-	if err != nil {
-		return err
+	// Create the multipart request body used to carry metadata and file data.
+	var requestBody bytes.Buffer
+	multipartWriter := multipart.NewWriter(&requestBody)
+
+	// Encode the file metadata before adding it to the request.
+	encodedMetadata, metadataEncodingError := json.Marshal(metadata)
+	if metadataEncodingError != nil {
+		return metadataEncodingError
 	}
-	if err := writer.WriteField("metadata", string(encoded)); err != nil {
-		return err
+
+	// Add the encoded metadata as the first multipart field.
+	if multipartMetadataWritingError := multipartWriter.WriteField("metadata", string(encodedMetadata)); multipartMetadataWritingError != nil {
+		return multipartMetadataWritingError
 	}
-	part, err := writer.CreateFormFile("file", metadata.FileName)
-	if err != nil {
-		return err
+
+	// Create the file section using the name recorded in the metadata.
+	filePart, filePartCreationError := multipartWriter.CreateFormFile("file", metadata.FileName)
+	if filePartCreationError != nil {
+		return filePartCreationError
 	}
-	if _, err := part.Write(data); err != nil {
-		return err
+
+	// Write the complete file data into the multipart file section.
+	if _, filePartWritingError := filePart.Write(fileData); filePartWritingError != nil {
+		return filePartWritingError
 	}
-	if err := writer.Close(); err != nil {
-		return err
+
+	// Close the multipart writer so its final boundary is added.
+	if multipartClosingError := multipartWriter.Close(); multipartClosingError != nil {
+		return multipartClosingError
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+address+"/file", &body)
-	if err != nil {
-		return err
+
+	// Create the HTTP request for the receiver's whole-file endpoint.
+	httpRequest, fileRequestCreationError := http.NewRequestWithContext(requestContext, http.MethodPost, "http://"+deviceAddress+"/file", &requestBody)
+	if fileRequestCreationError != nil {
+		return fileRequestCreationError
 	}
-	request.Header.Set("Content-Type", writer.FormDataContentType())
-	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second,
+
+	// Set the multipart content type and create a client without proxy redirects.
+	httpRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	httpClient := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	defer client.CloseIdleConnections()
-	response, err := client.Do(request)
-	if err != nil {
-		return err
+	defer httpClient.CloseIdleConnections()
+
+	// Send the request to the receiving device.
+	httpResponse, fileRequestSendingError := httpClient.Do(httpRequest)
+	if fileRequestSendingError != nil {
+		return fileRequestSendingError
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("whole-file transfer: %s: %s", response.Status, strings.TrimSpace(string(detail)))
+	defer httpResponse.Body.Close()
+
+	// Read a short error response when the receiver rejects the transfer.
+	if httpResponse.StatusCode != http.StatusOK {
+		errorDetails, _ := io.ReadAll(io.LimitReader(httpResponse.Body, 4096))
+		return fmt.Errorf("whole-file transfer: %s: %s", httpResponse.Status, strings.TrimSpace(string(errorDetails)))
 	}
-	var result TransferCompletion
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
-		return err
+
+	// Decode the receiver's verification result.
+	var completionResult TransferCompletion
+	if completionResponseDecodingError := json.NewDecoder(io.LimitReader(httpResponse.Body, 1<<20)).Decode(&completionResult); completionResponseDecodingError != nil {
+		return completionResponseDecodingError
 	}
-	if result.KeepLocal && !result.Completed {
+
+	// Report when the receiver kept its newer local version.
+	if completionResult.KeepLocal && !completionResult.Completed {
 		return &KeepLocalError{}
 	}
-	if result.ConflictFile != "" && !result.Completed {
-		return &SyncConflictError{ConflictFile: result.ConflictFile}
+
+	// Report the saved conflict copy when both devices changed the file.
+	if completionResult.ConflictFile != "" && !completionResult.Completed {
+		return &SyncConflictError{ConflictFile: completionResult.ConflictFile}
 	}
-	if !result.Completed || result.FileHash != metadata.FileHash {
+
+	// Verify that the receiver completed the transfer with the expected hash.
+	if !completionResult.Completed || completionResult.FileHash != metadata.FileHash {
 		return fmt.Errorf("receiver did not verify the whole file")
 	}
+
+	// Return success after the receiver verifies the complete file.
 	return nil
 }

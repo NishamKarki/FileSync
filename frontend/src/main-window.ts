@@ -1,14 +1,13 @@
 
+// Author: Rabindra Neupane
+
 import {
     AddFiles,
-    //Rabindra Neupane
     ListSyncedFiles,
     DiscoverDevices,
     GetLocalIP,
     SendFile,
-    //Rabindra Neupane
     SyncFile,
-    //Rabindra Neupane
     ConfigureCoordinator,
     GetRegistrationStatus,
     GetRegisteredDevices
@@ -35,7 +34,6 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
                 <p class="file-path" id="selected-files">No file selected</p>
             </div>
 
-                        <!-- Rabindra Neupane -->
             <div>
                 <button id="select-file-button">Add files from computer</button>
                 <p>Add files to Synced Files.</p>
@@ -43,12 +41,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         </section>
 
         <section class="file-details">
-            <!-- Rabindra Neupane -->
             <h2>Files in Synced Files</h2>
             <p>Select one or more files below to sync their working copies.</p>
             <p id="file-list-status" role="status"></p>
 
-            <!-- Rabindra Neupane -->
             <div class="file-table-scroll" tabindex="0" role="region" aria-label="Files in Synced Files, scroll to view more">
             <table class="file-table">
                 <thead>
@@ -69,17 +65,14 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
             <div class="section devices">
                 <h2>Connected Devices</h2>
-                <!-- Rabindra Neupane -->
                 <div class="coordinator-controls">
                     <label><input type="checkbox" id="coordinator-mode"> This computer is the coordinator</label>
                     <label for="coordinator-address">Coordinator IP:port</label>
                     <input id="coordinator-address" placeholder="192.168.1.10:8080" autocomplete="off">
                     <button id="save-coordinator-button">Apply Coordinator Settings</button>
-                    <p id="registration-status" aria-live="polite">Loading device registration...</p>
+                    <div id="registration-status" aria-live="polite">Loading device registration...</div>
                 </div>
-                <!-- Rabindra Neupane -->
                 <button id="find-coordinator-button">Find Coordinator</button>
-                <!-- Rabindra Neupane -->
                 <button id="registered-devices-button">Registered Devices</button>
 
                 <div id="connected-devices">
@@ -97,7 +90,6 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
         <footer class="footer">
             <button id="sync-now-button">Sync Now</button>
-            <!-- Rabindra Neupane -->
             <details class="transfer-diagnostics">
                 <summary>Transfer diagnostics</summary>
                 <div>
@@ -113,9 +105,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     </div>
 `
-///Rabindra Neupane
-// Test the GetLocalIP function and log the result
+// Rabindra Neupane
+// testLocalIP reads the local network address for development diagnostics.
 async function testLocalIP() {
+    // Read and log the address used by the local FileSync server.
     try {
         const localIP = await GetLocalIP();
         console.log("FileSync local IP address:");
@@ -127,9 +120,10 @@ async function testLocalIP() {
 }
 testLocalIP();
 
-//Rabindra Neupane
-// Discovery is used only to choose a coordinator during setup.
+// Rabindra Neupane
+// findCoordinator scans only when the user needs to choose a coordinator.
 async function findCoordinator() {
+    // Stop when a coordinator scan is already running.
     if (coordinatorSearchRunning) return;
     coordinatorSearchRunning = true;
     showingDiscovery = true;
@@ -148,31 +142,31 @@ async function findCoordinator() {
         if (button) button.disabled = false;
     }
 }
-//Rabindra Neupane
+// Rabindra Neupane
  document.getElementById('find-coordinator-button')?.addEventListener('click', () => { void findCoordinator(); });
-/// Selected device information
+// Save the selected device used by synchronization controls.
 let selectedDeviceAddress: string | null = null;
-//Rabindra Neupane
 let selectedDeviceID: string | null = null;
 let showingDiscovery = false;
-//Rabindra Neupane
 let coordinatorSearchRunning = false;
 let registrationRefreshRunning = false;
 let registrationSettingsLoaded = false;
 let registrationSettingsEdited = false;
 let ownDeviceID = '';
 
-//Rabindra Neupane
+// Rabindra Neupane
+// ListedDevice describes the coordinator data displayed in the frontend.
 type ListedDevice = { id: string; name: string; ip: string; port: number; online: boolean; lastSeen?: string; coordinator?: boolean };
 
-//Rabindra Neupane
+// Rabindra Neupane
+// renderDevices lists online devices first and keeps offline records visible.
 function renderDevices(devices: ListedDevice[]) {
+    // Read the container used for coordinator discovery and registered devices.
     const container = document.getElementById('connected-devices');
     if (!container) return;
     const previousAddress = selectedDeviceAddress;
     selectedDeviceAddress = null;
     container.replaceChildren();
-    //Rabindra Neupane
     // Keep online devices first, preserving the existing order within each group.
     const peers = devices
         .filter(device => !ownDeviceID || device.id !== ownDeviceID)
@@ -187,10 +181,7 @@ function renderDevices(devices: ListedDevice[]) {
         row.type = 'button';
         row.className = 'device';
         row.disabled = !device.online;
-        //Rabindra Neupane
-        row.textContent = `Device name: ${device.name}\nDevice ID: ${device.id || 'Not assigned'}\nAddress: ${address} · ${device.online ? 'online' : 'offline'}${device.coordinator ? ' · Coordinator' : ''}`;
         if (device.lastSeen) row.title = `Last seen: ${device.lastSeen}\nDevice ID: ${device.id}`;
-        //Rabindra Neupane
         // Discovery chooses setup details; only registered rows choose sync targets.
         if (showingDiscovery) {
             row.textContent = `${device.name} - Coordinator - ${address} - Use this coordinator`;
@@ -208,6 +199,13 @@ function renderDevices(devices: ListedDevice[]) {
             container.appendChild(row);
             continue;
         }
+        appendDetailRows(row, [
+            ['Device name', device.name || 'Unknown device'],
+            ['Device ID', device.id || 'Not assigned'],
+            ['Address', address],
+            ['Status', device.online ? 'Online' : 'Offline'],
+            ['Role', device.coordinator ? 'Coordinator' : 'Client']
+        ]);
         const selected = selectedDeviceID ? device.id === selectedDeviceID : address === previousAddress;
         if (selected && device.online) {
             selectedDeviceAddress = address;
@@ -224,8 +222,61 @@ function renderDevices(devices: ListedDevice[]) {
     }
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// appendDetailRows adds aligned labels and values without treating device data as HTML.
+function appendDetailRows(container: HTMLElement, details: string[][]) {
+    // Clear older values before adding the latest details.
+    container.replaceChildren();
+
+    for (const [detailLabel, detailValue] of details) {
+        const detailRow = document.createElement('div');
+        detailRow.className = 'registration-detail-row';
+
+        const labelElement = document.createElement('span');
+        labelElement.className = 'registration-detail-label';
+        labelElement.textContent = `${detailLabel}:`;
+
+        const valueElement = document.createElement('span');
+        valueElement.className = 'registration-detail-value';
+        valueElement.textContent = detailValue;
+
+        detailRow.append(labelElement, valueElement);
+        container.appendChild(detailRow);
+    }
+}
+
+// Rabindra Neupane
+// renderRegistrationStatus shows coordinator details and keeps long IDs readable.
+function renderRegistrationStatus(
+    container: HTMLElement,
+    status: Awaited<ReturnType<typeof GetRegistrationStatus>>
+) {
+    // Show setup guidance until a coordinator choice is configured.
+    if (!status.configured) {
+        container.classList.remove('registration-details');
+        container.textContent = 'Choose this computer as coordinator, or enter the coordinator address.';
+        return;
+    }
+
+    const registrationState = status.registered
+        ? 'Registered'
+        : status.lastError || 'Connecting';
+    const registrationDetails = [
+        ['Role', status.coordinator ? 'Coordinator' : 'Client'],
+        ['Device name', status.deviceName || 'Unknown device'],
+        ['Coordinator', status.coordinatorAddress || 'Connecting'],
+        ['Status', registrationState],
+        ['Device ID', status.deviceId || 'Not assigned']
+    ];
+
+    container.classList.add('registration-details');
+    appendDetailRows(container, registrationDetails);
+}
+
+// Rabindra Neupane
+// refreshRegistration reads status and devices without overlapping requests.
 async function refreshRegistration() {
+    // Stop when the previous registration refresh is still running.
     if (registrationRefreshRunning) return;
     registrationRefreshRunning = true;
     const label = document.getElementById('registration-status');
@@ -240,16 +291,9 @@ async function refreshRegistration() {
             address.disabled = mode.checked;
         }
         registrationSettingsLoaded = true;
-        //Rabindra Neupane
-        const deviceDetails = status.coordinator
-            ? `Coordinator: ${status.deviceName} (${status.coordinatorAddress || 'connecting'})`
-            : `Client: ${status.deviceName} - Coordinator: ${status.coordinatorAddress || 'connecting'}`;
         if (label) {
-            label.textContent = status.configured
-                ? `${deviceDetails} · ${status.registered ? 'registered' : status.lastError || 'connecting'}${status.deviceId ? ` · Device ID: ${status.deviceId}` : ''}`
-                : 'Choose this computer as coordinator, or enter the coordinator address.';
+            renderRegistrationStatus(label, status);
         }
-        //Rabindra Neupane
         if (!status.configured && !showingDiscovery) renderDevices([]);
         if (status.configured && !showingDiscovery) {
             const devices = await GetRegisteredDevices();
@@ -294,16 +338,18 @@ document.getElementById('registered-devices-button')?.addEventListener('click', 
     void refreshRegistration();
 });
 
-// Selected file information
-//Rabindra Neupane
+// Rabindra Neupane
+// Save the file names selected from the current Synced Files list.
 const selectedFileNames = new Set<string>();
 let selectionSource = 'Synced Files';
 // Use to populate "Recent activity" section with recently modified files
 const recentFileActivity = document.getElementById('recent-activity')
 
-//Rabindra Neupane
+// Rabindra Neupane
 let transferInProgress = false;
+// setTransferBusy disables transfer controls while one batch is running.
 function setTransferBusy(busy: boolean) {
+    // Save the shared busy state used by transfer controls.
     transferInProgress = busy;
     for (const id of ['sync-now-button', 'send-whole-file-button']) {
         const button = document.querySelector<HTMLButtonElement>(`#${id}`);
@@ -312,10 +358,12 @@ function setTransferBusy(busy: boolean) {
 }
 
 //Rabindra Neupane
-// Process a fixed selection sequentially; each file retains independent results.
+// Rabindra Neupane
+// transferSelectedFiles processes a fixed selection in order and reports each result.
 const syncNowButton = document.querySelector<HTMLButtonElement>('#sync-now-button');
 const wholeFileButton = document.querySelector<HTMLButtonElement>('#send-whole-file-button');
 async function transferSelectedFiles(wholeFile: boolean) {
+    // Stop duplicate clicks and require both a peer and selected files.
     if (transferInProgress) return;
     if (selectedFileNames.size === 0 || !selectedDeviceAddress) {
         if (recentFileActivity) recentFileActivity.textContent = 'Please select files and a device first.';
@@ -332,7 +380,6 @@ async function transferSelectedFiles(wholeFile: boolean) {
         for (const [index, name] of names.entries()) {
             if (recentFileActivity) recentFileActivity.textContent = [...outcomes, `${index + 1}/${names.length}: ${wholeFile ? 'Sending' : 'Syncing'} ${name}...`].join('\n');
             try {
-                //Rabindra Neupane
                 // Surface Santosh's decisions consistently for both transfer modes.
                 const result = wholeFile ? await SendFile(address, name) : await SyncFile(address, name);
                 if (result.keepLocal) {
@@ -356,14 +403,15 @@ async function transferSelectedFiles(wholeFile: boolean) {
 }
 syncNowButton?.addEventListener('click', () => { void transferSelectedFiles(false); });
 wholeFileButton?.addEventListener('click', () => { void transferSelectedFiles(true); });
-//Rabindra Neupane
+// Rabindra Neupane
 // File picker implementation: Nisham Karki. Working-folder selection: Rabindra Neupane.
 const selectFileButton = document.querySelector<HTMLButtonElement>('#select-file-button');
 let fileListRefreshing = false;
 let fileListSignature = '';
-//Rabindra Neupane
-// Measure five real rows so wrapped names and window resizing stay within the limit.
+// Rabindra Neupane
+// sizeFileList measures five rows so longer lists scroll inside the table.
 function sizeFileList() {
+    // Read the scroll area, table body, and current rows.
     const viewport = document.querySelector<HTMLElement>('.file-table-scroll');
     const table = document.querySelector<HTMLTableElement>('.file-table');
     if (!viewport || !table) return;
@@ -380,8 +428,10 @@ if (fileTable) fileTableObserver.observe(fileTable);
 window.addEventListener('beforeunload', () => fileTableObserver.disconnect());
 
 
-//Rabindra Neupane
+// Rabindra Neupane
+// updateFileSelection removes selections that are no longer present.
 function updateFileSelection() {
+    // Read the label that summarizes the current selection.
     const label = document.getElementById('selected-files');
     if (label) label.textContent = selectedFileNames.size
         ? `${selectionSource} (${selectedFileNames.size} selected): ${[...selectedFileNames].join(', ')}`
@@ -391,14 +441,15 @@ function updateFileSelection() {
         input.closest('tr')?.classList.toggle('selected-file', input.checked);
     });
 }
-//Rabindra Neupane
+// Rabindra Neupane
+// refreshSyncedFiles reads the working folder and redraws only when data changes.
 async function refreshSyncedFiles() {
+    // Stop when a previous folder refresh is still running.
     if (fileListRefreshing) return;
     fileListRefreshing = true;
     const status = document.getElementById('file-list-status');
     try {
         const files = await ListSyncedFiles();
-        //Rabindra Neupane
         for (const name of selectedFileNames) {
             if (!files.some(file => file.name === name)) selectedFileNames.delete(name);
         }
@@ -413,13 +464,11 @@ async function refreshSyncedFiles() {
                 const nameCell = document.createElement('td');
                 const label = document.createElement('label');
                 const radio = document.createElement('input');
-                //Rabindra Neupane
                 radio.type = 'checkbox';
                 radio.name = 'sync-file';
                 radio.value = file.name;
                 radio.checked = selectedFileNames.has(file.name);
                 row.classList.toggle('selected-file', radio.checked);
-                //Rabindra Neupane
                 radio.addEventListener('change', () => {
                     if (radio.checked) selectedFileNames.add(file.name);
                     else selectedFileNames.delete(file.name);
@@ -436,7 +485,6 @@ async function refreshSyncedFiles() {
                 }
                 body.appendChild(row);
             }
-            //Rabindra Neupane
             sizeFileList();
             fileListSignature = signature;
         }
@@ -452,7 +500,6 @@ async function refreshSyncedFiles() {
 selectFileButton?.addEventListener('click', async () => {
     selectFileButton.disabled = true;
     try {
-        //Rabindra Neupane
         const result = await AddFiles();
         await refreshSyncedFiles();
         if (result.names.length) {
@@ -478,7 +525,6 @@ window.addEventListener('beforeunload', () => window.clearInterval(fileListTimer
 let recentActivites: string[] = []
 
 EventsOn('file-change', (modifiedFile: string) => {
-    //Rabindra Neupane
     void refreshSyncedFiles();
     // Keep the most recent activity on top
     recentActivites.unshift(modifiedFile)
@@ -493,7 +539,7 @@ EventsOn('file-change', (modifiedFile: string) => {
     }
 })
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Poll registration separately from explicit subnet scans; avoid overlapping requests.
 void refreshRegistration();
 const registrationRefreshTimer = window.setInterval(() => { void refreshRegistration(); }, 5000);

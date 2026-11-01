@@ -12,58 +12,65 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-//Rabindra Neupane
+// Rabindra Neupane
 // Multi-file selection extends Nisham Karki's picker and copy workflow.
 type FileImportResult struct {
 	Names  []string `json:"names"`
 	Errors []string `json:"errors"`
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// AddFiles opens multi-file selection and imports each chosen file into Synced Files.
 func (app *App) AddFiles() (*FileImportResult, error) {
-	paths, err := runtime.OpenMultipleFilesDialog(app.ctx, runtime.OpenDialogOptions{
+	// Open the system dialog and allow more than one selected file.
+	selectedFilePaths, fileDialogError := runtime.OpenMultipleFilesDialog(app.ctx, runtime.OpenDialogOptions{
 		Title: "Select files to add to FileSync",
 	})
-	if err != nil {
-		return nil, err
+	if fileDialogError != nil {
+		return nil, fileDialogError
 	}
+	// Create separate result lists for imported files and failed imports.
 	result := &FileImportResult{Names: make([]string, 0), Errors: make([]string, 0)}
+	// Track imported names so the result does not contain duplicates.
 	seen := make(map[string]bool)
-	for _, path := range paths {
-		name := app.addSelectedFile(path)
+	// Import every file selected in the system dialog.
+	for _, selectedFilePath := range selectedFilePaths {
+		// Copy or select this file inside Synced Files.
+		name := app.addSelectedFile(selectedFilePath)
+		// Record a failure or add the successfully imported name once.
 		if name == "" {
-			result.Errors = append(result.Errors, "Could not import "+filepath.Base(path))
+			result.Errors = append(result.Errors, "Could not import "+filepath.Base(selectedFilePath))
 		} else if !seen[name] {
 			result.Names = append(result.Names, name)
 			seen[name] = true
 		}
 	}
+	// Return all successful imports and individual failures.
 	return result, nil
 }
 
-//Rabindra Neupane
-// File picker/copy implementation: Nisham Karki.
-// Existing-file selection and testable path handling: Rabindra Neupane.
+// Rabindra Neupane
+// addSelectedFile copies one selected file or selects its existing Synced Files copy.
+// File copy: Nisham Karki. Existing-file handling: Rabindra Neupane.
 func (app *App) addSelectedFile(selectFilePath string) string {
 
-	// Get selected file name
+	// Read the selected file name without its outside folder path.
 	fileName := filepath.Base(selectFilePath)
 
-	// Create destination path for files to sync
+	// Create the default destination inside Synced Files.
 	destinationFilePath := filepath.Join(
 		app.syncFolderPath,
 		fileName,
 	)
 
-	// Check whether file already exists in the Synced files
+	// Check for an existing copy or find an available destination name.
 	destinationFilePath, ifFileAlreadyExists :=
 		GetAvailableFilePath(
 			selectFilePath,
 			app.syncFolderPath,
 		)
 
-	//Rabindra Neupane
-	// Select the existing synced copy without copying or overwriting it.
+	// Return the existing synced copy without overwriting it.
 	if ifFileAlreadyExists {
 
 		fmt.Println(
@@ -74,7 +81,7 @@ func (app *App) addSelectedFile(selectFilePath string) string {
 		return filepath.Base(destinationFilePath)
 	}
 
-	// Open original file
+	// Open the outside source file for reading.
 	sourceFile, sourceFileOpenError :=
 		os.Open(selectFilePath)
 
@@ -82,10 +89,10 @@ func (app *App) addSelectedFile(selectFilePath string) string {
 		return ""
 	}
 
-	// Close the original files
+	// Close the source file when copying finishes.
 	defer sourceFile.Close()
 
-	// Create copied file
+	// Create the new destination file.
 	destinationFile, destinationFileCreationError :=
 		os.Create(destinationFilePath)
 
@@ -93,14 +100,14 @@ func (app *App) addSelectedFile(selectFilePath string) string {
 		return ""
 	}
 
+	// Close the destination if the copy exits before the explicit close below.
 	defer destinationFile.Close()
 
-	// Copy contents from original into FileSync
-	//Rabindra Neupane
-	// Do not select a partial copy if importing one of the files fails.
-	_, copyError := io.Copy(destinationFile, sourceFile)
-	closeError := destinationFile.Close()
-	if copyError != nil || closeError != nil {
+	// Copy all bytes and remove a partial destination when copying fails.
+	_, fileCopyingError := io.Copy(destinationFile, sourceFile)
+	destinationFileClosingError := destinationFile.Close()
+	if fileCopyingError != nil || destinationFileClosingError != nil {
+		// Remove incomplete output so it is not shown as a synced file.
 		os.Remove(destinationFilePath)
 		return ""
 	}
@@ -110,10 +117,11 @@ func (app *App) addSelectedFile(selectFilePath string) string {
 		"copied successfully",
 	)
 
+	// Return the imported file name used by the frontend selection list.
 	return filepath.Base(destinationFilePath)
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // SyncedFile describes a working file, without claiming it matches a remote peer.
 type SyncedFile struct {
 	Name     string `json:"name"`
@@ -121,30 +129,40 @@ type SyncedFile struct {
 	Modified string `json:"modified"`
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
 // ListSyncedFiles reads the working folder directly; no metadata schema changes.
 // The current sync protocol supports files in this folder, not nested folders.
 func (app *App) ListSyncedFiles() ([]SyncedFile, error) {
+	// Check that application startup prepared the working folder.
 	if app.syncFolderPath == "" {
 		return nil, fmt.Errorf("Synced Files is not ready")
 	}
-	entries, err := os.ReadDir(app.syncFolderPath)
-	if err != nil {
-		return nil, fmt.Errorf("read Synced Files: %w", err)
+	// Read the current entries directly from Synced Files.
+	directoryEntries, directoryReadingError := os.ReadDir(app.syncFolderPath)
+	if directoryReadingError != nil {
+		return nil, fmt.Errorf("read Synced Files: %w", directoryReadingError)
 	}
-	files := make([]SyncedFile, 0, len(entries))
-	for _, entry := range entries {
+	// Create the file list with enough capacity for all directory entries.
+	files := make([]SyncedFile, 0, len(directoryEntries))
+	// Inspect every entry and keep only normal files.
+	for _, entry := range directoryEntries {
+		// Skip folders and other non-file entries.
 		if !entry.Type().IsRegular() {
 			continue
 		}
-		info, err := entry.Info()
-		if os.IsNotExist(err) {
+		// Read file size and modification time for the frontend table.
+		fileInformation, informationReadingError := entry.Info()
+		// Ignore a file that disappeared during the directory scan.
+		if os.IsNotExist(informationReadingError) {
 			continue
 		}
-		if err != nil {
-			return nil, fmt.Errorf("read file details: %w", err)
+		// Stop when file details fail for another reason.
+		if informationReadingError != nil {
+			return nil, fmt.Errorf("read file details: %w", informationReadingError)
 		}
-		files = append(files, SyncedFile{Name: entry.Name(), Size: info.Size(), Modified: info.ModTime().UTC().Format(time.RFC3339Nano)})
+		// Add the file using a stable UTC modification timestamp.
+		files = append(files, SyncedFile{Name: entry.Name(), Size: fileInformation.Size(), Modified: fileInformation.ModTime().UTC().Format(time.RFC3339Nano)})
 	}
+	// Return the complete current Synced Files list.
 	return files, nil
 }

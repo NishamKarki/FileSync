@@ -1,16 +1,13 @@
-// /Rabindra Neupane
+// Author: Rabindra Neupane
 package network
 
 import "context"
 
-// FileMetadata describes one proposed file version. Version numbers use the
-// existing file_versions convention; BaseVersion is nil for an initial version.
-// ChunkHashes are ordered by the same zero-based indexes used by ChunkFile.
-//Rabindra Neupane
+// Rabindra Neupane
+// FileMetadata describes one proposed file version and its ordered chunk hashes.
+// Base fields identify the shared version used for incremental comparison.
 // Version counters are local; BaseChunkHashes identifies the shared content base.
-//Rabindra Neupane
 type FileMetadata struct {
-	//Rabindra Neupane
 	// Conflict contract agreed with Santosh Tripathee; base is a whole-file SHA-256.
 	BaseHash    string `json:"baseHash"`
 	DeviceID    string `json:"deviceId"`
@@ -18,10 +15,8 @@ type FileMetadata struct {
 	FileName    string `json:"fileName"`
 	Version     int    `json:"version"`
 	BaseVersion *int   `json:"baseVersion"`
-	//Rabindra Neupane
 	// Nil means the base is unknown; an empty list identifies an empty base file.
 	BaseChunkHashes []string `json:"baseChunkHashes"`
-	//Rabindra Neupane
 	// Content identities along the sender's parent chain allow lagging peers to catch up.
 	BaseRevisions []string `json:"baseRevisions,omitempty"`
 	FileSize      int64    `json:"fileSize"`
@@ -30,62 +25,61 @@ type FileMetadata struct {
 	FileHash      string   `json:"fileHash"`
 }
 
-// FileMetadataComparison identifies chunks whose stored bytes cannot be reused.
-// An empty list does not confirm reconstruction or version/conflict acceptance.
-//Rabindra Neupane
-type FileMetadataComparison struct {
-	NeededChunks []int `json:"neededChunks"`
-}
-
-//Rabindra Neupane
-// TransferPlan identifies an isolated incoming transfer and its missing chunks.
+// Rabindra Neupane
+// TransferPlan identifies an isolated incoming transfer and the chunks it needs.
 type TransferPlan struct {
 	TransferID   string `json:"transferId"`
 	NeededChunks []int  `json:"neededChunks"`
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// TransferCompletion is the receiver's final acknowledgement. KeepLocal and
+// ConflictFile explain valid outcomes where the incoming file was not applied.
 type TransferCompletion struct {
-	//Rabindra Neupane
-	KeepLocal  bool   `json:"keepLocal,omitempty"`
-	FileHash   string `json:"fileHash,omitempty"`
-	TransferID string `json:"transferId"`
-	Completed  bool   `json:"completed"`
-	//Rabindra Neupane
+	KeepLocal    bool   `json:"keepLocal,omitempty"`
+	FileHash     string `json:"fileHash,omitempty"`
+	TransferID   string `json:"transferId"`
+	Completed    bool   `json:"completed"`
 	ConflictFile string `json:"conflictFile,omitempty"`
 }
 
-//Rabindra Neupane
-// SyncConflictError means the original was kept and the incoming bytes were saved.
+// Rabindra Neupane
+// SyncConflictError reports that the local file was kept and the incoming copy was saved.
 type SyncConflictError struct{ ConflictFile string }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// KeepLocalError reports that the receiver already has a newer file version.
 type KeepLocalError struct{}
 
-//Rabindra Neupane
+// Rabindra Neupane
+// Error describes the recovery action after the receiver keeps its local file.
 func (*KeepLocalError) Error() string {
+	// Return the recovery message shown to the sender.
 	return "receiver has a newer version; pull it before syncing this older copy"
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// Error reports where the receiver preserved the incoming conflict copy.
 func (e *SyncConflictError) Error() string {
+	// Return the path where the incoming copy was preserved.
 	return "sync conflict: incoming copy preserved at " + e.ConflictFile
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// Device is the public coordinator record used by discovery and the frontend.
 type Device struct {
 	DeviceID     string `json:"id"`
 	DeviceName   string `json:"name"`
 	DeviceIP     string `json:"ip"`
 	DevicePort   int    `json:"port"`
 	DeviceOnline bool   `json:"online"`
-	//Rabindra Neupane
-	LastSeen    string `json:"lastSeen"`
-	Coordinator bool   `json:"coordinator"`
+	LastSeen     string `json:"lastSeen"`
+	Coordinator  bool   `json:"coordinator"`
 }
 
-//Rabindra Neupane
-// ChunkLocationStore is implemented by Santosh's metadata layer.
+// Rabindra Neupane
+// ChunkLocationStore defines the database operations needed for chunk locations.
+// The persistent implementation belongs to Santosh's metadata layer.
 // ReplaceDeviceChunks atomically replaces the entire inventory, including an
 // empty inventory. DeviceIDsForChunk returns unique device IDs for that hash.
 type ChunkLocationStore interface {
@@ -93,15 +87,16 @@ type ChunkLocationStore interface {
 	DeviceIDsForChunk(context.Context, string) ([]string, error)
 }
 
-//Rabindra Neupane
-// RegistrationKey proves which registered installation is reporting inventory.
+// Rabindra Neupane
+// ChunkReport carries one registered installation's complete chunk inventory.
 type ChunkReport struct {
 	DeviceID        string   `json:"deviceId"`
 	RegistrationKey string   `json:"registrationKey"`
 	ChunkHashes     []string `json:"chunkHashes"`
 }
 
-//Rabindra Neupane
+// Rabindra Neupane
+// ChunkLocations lists online registered devices that report a verified chunk.
 type ChunkLocations struct {
 	ChunkHash string   `json:"chunkHash"`
 	Devices   []Device `json:"devices"`

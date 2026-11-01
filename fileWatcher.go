@@ -71,7 +71,6 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 		return
 	}
 
-	//Rabindra Neupane
 	// Watcher implementation: Nisham Karki
 	// Ignore only bytes already accepted as a remote version, not later user edits.
 	app.fileProcessingMutex.Lock()
@@ -190,7 +189,6 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	if fileWatcherEvent.Op&fsnotify.Remove != 0 {
 		fmt.Println("REMOVE:", fileName)
 
-		//Rabindra Neupane
 		// Convert the deteled/removed file path into relative file path
 		// so that the matching file can be removed from the database
 		relativePath, _ := filepath.Rel(app.syncFolderPath, fileWatcherEvent.Name)
@@ -211,7 +209,6 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 
 	// Lock the timer before reading or changing it
 	app.timerMutex.Lock()
-	//Rabindra Neupane
 	if app.fileTimers == nil {
 		app.fileTimers = make(map[string]*time.Timer)
 	}
@@ -238,7 +235,6 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 
 			app.timerMutex.Unlock()
 
-			//Rabindra Neupane
 			// A pending timer may predate remote application. Check again here.
 			app.fileProcessingMutex.Lock()
 			defer app.fileProcessingMutex.Unlock()
@@ -247,9 +243,9 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 			}
 
 			// Check if file still exists before processing it
-			fileInfo, fileCheckerError := os.Stat(filePath)
+			fileInfo, fileStatError := os.Stat(filePath)
 
-			if fileCheckerError != nil {
+			if fileStatError != nil {
 				fmt.Println(
 					"File no longer exists:",
 					filepath.Base(filePath),
@@ -267,7 +263,6 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 				filepath.Base(filePath),
 			)
 
-			//Rabindra Neupane
 			// Watcher: Nisham Karki. Share serialized preparation with Sync Now;
 			// Santosh's existing recorder deduplicates unchanged content.
 			fileName := filepath.Base(filePath)

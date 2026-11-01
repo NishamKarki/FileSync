@@ -150,19 +150,18 @@ button:hover {
     /* Adds vertical separation between discovered devices */
     margin: 13px 0;
 
-    /* Creates a small space between pieces of device information */
-    gap: 5px;
+    /* Separates each labeled device detail row */
+    gap: 6px;
 
     /* Shows that a device row can be clicked or selected */
     cursor: pointer;
 
-    /* Places the device information on one horizontal line */
-    display: flex;
+    /* Places the device information in aligned rows */
+    display: grid;
 
-    /* Keeps device information vertically aligned within the row */
-    align-items: center;
+    padding: 14px 16px;
 
-    grid-template-columns: 16px 1fr auto;
+    align-items: start;
 }
 
 .device.selected-device {
@@ -173,7 +172,6 @@ button:hover {
     border-radius: 6px;
 }
 
-/* Rabindra Neupane - coordinator setup and live registered-device states. */
 .coordinator-controls {
     display: flex;
     flex-direction: column;
@@ -184,8 +182,32 @@ button:hover {
     padding: 8px;
     min-width: 0;
 }
-#registration-status { overflow-wrap: anywhere; font-size: 0.85rem; }
-/* Rabindra Neupane - show registered device names and IDs on separate lines. */
+#registration-status {
+    overflow-wrap: anywhere;
+    font-size: 0.85rem;
+}
+
+.registration-details {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.registration-detail-row {
+    display: grid;
+    grid-template-columns: 110px minmax(0, 1fr);
+    column-gap: 12px;
+    align-items: start;
+}
+
+.registration-detail-label {
+    font-weight: 700;
+}
+
+.registration-detail-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
 button.device { width: 100%; text-align: left; white-space: pre-line; overflow-wrap: anywhere; }
 button.device:disabled { opacity: 0.55; cursor: default; }
 
@@ -230,17 +252,14 @@ button.device:disabled { opacity: 0.55; cursor: default; }
     gap: 10px;
 }
 
-/* Rabindra Neupane - keep normal sync prominent and diagnostics optional. */
 .footer { gap: 12px; flex-wrap: wrap; align-items: flex-start; }
 .transfer-diagnostics summary { cursor: pointer; padding: 9px 0; }
 .transfer-diagnostics > div { flex-wrap: wrap; margin-top: 8px; }
-/* Rabindra Neupane - select working files directly from their live list. */
 .file-table .selected-file { background: #303b48; }
 .file-table label { display: flex; align-items: center; gap: 8px; cursor: pointer; overflow-wrap: anywhere; }
 .file-table input[type="checkbox"] { flex-shrink: 0; }
 .file-path, #file-list-status { overflow-wrap: anywhere; }
 .select-file-to-sync > div > p { max-width: 42rem; }
-/* Rabindra Neupane - scroll through files without stretching the whole page. */
 .file-table-scroll {
     max-height: 340px;
     overflow: auto;
@@ -248,7 +267,6 @@ button.device:disabled { opacity: 0.55; cursor: default; }
     scrollbar-color: #858585 #232323;
     margin-bottom: 16px;
 }
-/* Rabindra Neupane - no row gaps beyond the five-row viewport. */
 .file-table-scroll .file-table { margin-bottom: 0; border-collapse: collapse; }
 .file-table-scroll th {
     position: sticky;

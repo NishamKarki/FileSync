@@ -7,15 +7,17 @@ import (
 	"os"
 )
 
-//Rabindra Neupane
-// Implement Santosh's agreed disk-hash contract until his helper is available.
-// Missing files differ from empty files (whose SHA-256 is nonempty).
+// Rabindra Neupane
+// HashFileOnDisk returns the current complete-file hash from disk.
+// Missing files return an empty value, while empty files still have a SHA-256 hash.
 func HashFileOnDisk(path string) (string, error) {
-	hash, err := hashStoredFile(path)
-	if os.IsNotExist(err) {
+	// Create the hash from the file's current bytes.
+	fileHash, fileHashingError := hashStoredFile(path)
+	// Treat a missing file as absent content for conflict decisions.
+	if os.IsNotExist(fileHashingError) {
 		return "", nil
 	}
-	return hash, err
+	return fileHash, fileHashingError
 }
 
 // Returns the hash both devices last agreed on for this file.
@@ -24,15 +26,15 @@ func GetBaseHash(db *sql.DB, fileID string) (string, error) {
 
 	// NullString handles NULL, which means "never synced"
 	var baseHash sql.NullString
-	queryError := db.QueryRow(
+	baseHashQueryError := db.QueryRow(
 		"SELECT last_synced_hash FROM files WHERE id = ?", fileID,
 	).Scan(&baseHash)
 
-	if queryError == sql.ErrNoRows {
+	if baseHashQueryError == sql.ErrNoRows {
 		return "", nil
 	}
-	if queryError != nil {
-		return "", queryError
+	if baseHashQueryError != nil {
+		return "", baseHashQueryError
 	}
 
 	// A NULL value becomes "" here
@@ -47,7 +49,7 @@ func GetLocalHash(db *sql.DB, fileID string) (string, error) {
 	// a file removes its row from files but keeps its old versions.
 	// The newest version is the one with the highest id.
 	var localHash sql.NullString
-	queryError := db.QueryRow(
+	localHashQueryError := db.QueryRow(
 		`SELECT file_versions.content_hash
 		 FROM file_versions
 		 JOIN files ON files.id = file_versions.file_id
@@ -57,11 +59,11 @@ func GetLocalHash(db *sql.DB, fileID string) (string, error) {
 		fileID,
 	).Scan(&localHash)
 
-	if queryError == sql.ErrNoRows {
+	if localHashQueryError == sql.ErrNoRows {
 		return "", nil
 	}
-	if queryError != nil {
-		return "", queryError
+	if localHashQueryError != nil {
+		return "", localHashQueryError
 	}
 
 	return localHash.String, nil
@@ -71,9 +73,9 @@ func GetLocalHash(db *sql.DB, fileID string) (string, error) {
 // The sender calls this after sending a file, and the receiver after accepting it.
 func SetBaseHash(db *sql.DB, fileID string, agreedHash string) error {
 
-	_, updateError := db.Exec(
+	_, baseHashUpdateError := db.Exec(
 		"UPDATE files SET last_synced_hash = ? WHERE id = ?",
 		agreedHash, fileID,
 	)
-	return updateError
+	return baseHashUpdateError
 }
