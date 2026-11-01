@@ -249,7 +249,11 @@ func (registry *DeviceRegistry) Status() RegistrationStatus {
 
 // Rabindra Neupane
 // Close stops the heartbeat service and waits for its goroutine to finish.
-func (registry *DeviceRegistry) Close() { /* Stop the service and wait for its completion signal. */ registry.cancelService(); <-registry.doneSignal }
+func (registry *DeviceRegistry) Close() {
+	// Stop the service and wait for its completion signal.
+	registry.cancelService()
+	<-registry.doneSignal
+}
 
 // Rabindra Neupane
 // Handler groups the coordinator's registration, heartbeat, and device-list routes.

@@ -72,10 +72,11 @@ func GetLocalHash(db *sql.DB, fileID string) (string, error) {
 // Saves the hash both devices now agree on, after a successful sync.
 // The sender calls this after sending a file, and the receiver after accepting it.
 func SetBaseHash(db *sql.DB, fileID string, agreedHash string) error {
-
+	// Save the whole-file hash that both devices now share.
 	_, baseHashUpdateError := db.Exec(
 		"UPDATE files SET last_synced_hash = ? WHERE id = ?",
 		agreedHash, fileID,
 	)
+	// Return the database update result to the sync workflow.
 	return baseHashUpdateError
 }

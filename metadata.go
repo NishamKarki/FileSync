@@ -162,10 +162,11 @@ func executeTableCreation(
 	database *sql.DB,
 	tableQuery string,
 ) error {
-
+	// Execute the idempotent table creation statement.
 	_, tableExecutionError :=
 		database.Exec(tableQuery)
 
+	// Return the database result to the initialization workflow.
 	return tableExecutionError
 }
 

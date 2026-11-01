@@ -32,6 +32,7 @@ func main() {
 		},
 	})
 
+	// Print the startup failure when Wails cannot run the application.
 	if applicationRunError != nil {
 		println("Error:", applicationRunError.Error())
 	}
