@@ -129,6 +129,43 @@ button:hover {
     gap: 8px;
     margin-bottom: 16px;
 }
+
+/* Keep the Coordinator and Client choices together and easy to scan. */
+.role-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    padding: 12px;
+    border: 1px solid #555;
+}
+
+.role-options label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+}
+
+/* Group the controls used by each connection role. */
+#client-connection-controls,
+#coordinator-pairing-controls {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid #444;
+}
+
+/* Hidden role groups must stay hidden even though they normally use grid. */
+#client-connection-controls[hidden],
+#coordinator-pairing-controls[hidden] {
+    display: none;
+}
+
+.connection-guidance {
+    margin: 0;
+    color: #c5c5c5;
+    font-size: 0.82rem;
+}
 /* The text box only, not the checkbox. min-width 0 stops it from overflowing the panel */
 .coordinator-controls input:not([type="checkbox"]) {
     padding: 8px;
@@ -138,6 +175,21 @@ button:hover {
 #registration-status {
     overflow-wrap: anywhere;
     font-size: 0.85rem;
+}
+
+/* Put optional diagnostic text below the friendly connection message. */
+#connection-help {
+    overflow-wrap: anywhere;
+    font-size: 0.8rem;
+}
+
+#connection-help summary {
+    cursor: pointer;
+}
+
+#connection-help pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 /* Pairing status shows the temporary code without stretching the device panel. */
