@@ -45,6 +45,7 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 	// Read a consistent settings snapshot without holding the lock during network work.
 	registry.mutex.Lock()
 	deviceSettings := registry.settings
+	pendingPairingCode := registry.pendingPairingCode
 	settingsGeneration := registry.generation
 	registry.mutex.Unlock()
 
@@ -68,6 +69,7 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 			DeviceID:        deviceSettings.DeviceID,
 			Name:            registry.name,
 			Port:            registry.port,
+			PairingCode:     pendingPairingCode,
 		}
 
 		// Register locally in coordinator mode or contact the remote coordinator.
@@ -85,6 +87,8 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 			// Use heartbeat after this installation has an assigned ID.
 			if registration.DeviceID != "" {
 				requestPath = "/devices/heartbeat"
+				registration.RegistrationKey = ""
+				registration.PairingCode = ""
 			}
 
 			registrationError = registry.registryRequest(
@@ -97,6 +101,9 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 
 			// Retry full registration when a heartbeat identity is no longer known.
 			if registrationError != nil && requestPath == "/devices/heartbeat" {
+				// Restore the secret field required by the registration endpoint.
+				registration.RegistrationKey = deviceSettings.RegistrationKey
+				registration.PairingCode = pendingPairingCode
 				registrationError = registry.registryRequest(
 					requestContext,
 					deviceSettings.CoordinatorAddress,
@@ -139,6 +146,10 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 			registry.settings = updatedSettings
 		}
 	}
+	// Clear a submitted pairing code after the coordinator accepts registration.
+	if registrationError == nil {
+		registry.pendingPairingCode = ""
+	}
 
 	// Update the public registration state after this heartbeat attempt.
 	registry.registered = registrationError == nil
@@ -162,10 +173,12 @@ func (registry *DeviceRegistry) registryRequest(
 	// Use GET for reads and POST when request data is present.
 	requestMethod := http.MethodGet
 	var requestBody io.Reader
+	var encodedRequest []byte
 
 	// Encode request data and switch to POST when a body is present.
 	if requestData != nil {
-		encodedRequest, requestEncodingError := json.Marshal(requestData)
+		var requestEncodingError error
+		encodedRequest, requestEncodingError = json.Marshal(requestData)
 		if requestEncodingError != nil {
 			return requestEncodingError
 		}
@@ -185,6 +198,15 @@ func (registry *DeviceRegistry) registryRequest(
 	}
 	// Mark the request body as JSON for coordinator endpoints.
 	httpRequest.Header.Set("Content-Type", "application/json")
+	// Read the persistent identity without holding the lock during network work.
+	registry.mutex.Lock()
+	deviceID := registry.settings.DeviceID
+	registrationKey := registry.settings.RegistrationKey
+	registry.mutex.Unlock()
+	// Sign every coordinator request with this installation's private secret.
+	if requestSigningError := signCoordinatorRequest(httpRequest, encodedRequest, deviceID, registrationKey); requestSigningError != nil {
+		return requestSigningError
+	}
 
 	// Create a direct client with redirects disabled.
 	httpClient := &http.Client{

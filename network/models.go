@@ -90,9 +90,8 @@ type ChunkLocationStore interface {
 // Rabindra Neupane
 // ChunkReport carries one registered installation's complete chunk inventory.
 type ChunkReport struct {
-	DeviceID        string   `json:"deviceId"`
-	RegistrationKey string   `json:"registrationKey"`
-	ChunkHashes     []string `json:"chunkHashes"`
+	DeviceID    string   `json:"deviceId"`
+	ChunkHashes []string `json:"chunkHashes"`
 }
 
 // Rabindra Neupane

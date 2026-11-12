@@ -2,7 +2,6 @@
 package network
 
 import (
-	"database/sql"
 	"encoding/hex"
 	"net/http"
 	"strings"
@@ -35,12 +34,24 @@ func (registry *DeviceRegistry) reportChunks(responseWriter http.ResponseWriter,
 		http.Error(responseWriter, "Only POST requests are allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Preserve the exact body before decoding and authenticating it.
+	requestBody, requestBodyReadingError := readAuthenticationBody(responseWriter, request)
+	if requestBodyReadingError != nil {
+		http.Error(responseWriter, "Cannot read chunk report", http.StatusBadRequest)
+		return
+	}
 	// Read the device identity and complete chunk inventory.
 	var report ChunkReport
 	chunkReportReadingError := readTransferJSON(responseWriter, request, &report)
 	// Require a complete registered identity and a non-nil inventory list.
-	if chunkReportReadingError != nil || report.DeviceID == "" || report.RegistrationKey == "" || report.ChunkHashes == nil {
-		http.Error(responseWriter, "Provide deviceId, registrationKey and chunkHashes (use [] to clear inventory)", http.StatusBadRequest)
+	if chunkReportReadingError != nil || report.DeviceID == "" || report.ChunkHashes == nil {
+		http.Error(responseWriter, "Provide deviceId and chunkHashes (use [] to clear inventory)", http.StatusBadRequest)
+		return
+	}
+	// Verify the signed device identity before accepting its inventory.
+	registeredDeviceID, chunkReportAuthenticationError := registry.authenticateRegisteredRequest(request, requestBody, report.DeviceID)
+	if chunkReportAuthenticationError != nil {
+		http.Error(responseWriter, chunkReportAuthenticationError.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -60,36 +71,19 @@ func (registry *DeviceRegistry) reportChunks(responseWriter http.ResponseWriter,
 			seenHashes[chunkHash] = true
 		}
 	}
-	// Lock the registry while checking storage and registration state.
+	// Lock the registry while checking storage and coordinator state.
 	registry.mutex.Lock()
-	// Release the lock when inventory processing finishes.
-	defer registry.mutex.Unlock()
+	chunkStore := registry.chunkLocations
+	isCoordinator := registry.settings.Coordinator
+	registry.mutex.Unlock()
 	// Confirm the coordinator and chunk-location storage are available.
-	if !registry.settings.Coordinator || registry.chunkLocations == nil {
+	if !isCoordinator || chunkStore == nil {
 		http.Error(responseWriter, "Coordinator chunk-location storage is not connected", http.StatusServiceUnavailable)
-		return
-	}
-	// Read the device ID assigned to this private registration key.
-	var registeredDeviceID string
-	deviceRegistrationQueryError := registry.database.QueryRowContext(
-		request.Context(),
-		"SELECT device_id FROM device_registry WHERE registration_key=?",
-		report.RegistrationKey,
-	).Scan(&registeredDeviceID)
-
-	// Reject an unknown key or a device ID that does not match the key.
-	if deviceRegistrationQueryError == sql.ErrNoRows || (deviceRegistrationQueryError == nil && registeredDeviceID != report.DeviceID) {
-		http.Error(responseWriter, "Register this device before reporting chunks", http.StatusForbidden)
-		return
-	}
-	// Return an internal error when the registration query fails.
-	if deviceRegistrationQueryError != nil {
-		http.Error(responseWriter, "Cannot verify registered device", http.StatusInternalServerError)
 		return
 	}
 
 	// Replace the device's complete chunk inventory in one operation.
-	chunkInventorySavingError := registry.chunkLocations.ReplaceDeviceChunks(request.Context(), registeredDeviceID, chunkHashes)
+	chunkInventorySavingError := chunkStore.ReplaceDeviceChunks(request.Context(), registeredDeviceID, chunkHashes)
 	if chunkInventorySavingError != nil {
 		http.Error(responseWriter, "Cannot save chunk inventory", http.StatusInternalServerError)
 		return
@@ -109,6 +103,11 @@ func (registry *DeviceRegistry) locateChunk(responseWriter http.ResponseWriter, 
 	if request.Method != http.MethodGet {
 		responseWriter.Header().Set("Allow", http.MethodGet)
 		http.Error(responseWriter, "Only GET requests are allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Require a registered signed request before exposing chunk locations.
+	if _, chunkLookupAuthenticationError := registry.authenticateRegisteredRequest(request, nil, ""); chunkLookupAuthenticationError != nil {
+		http.Error(responseWriter, chunkLookupAuthenticationError.Error(), http.StatusUnauthorized)
 		return
 	}
 

@@ -44,32 +44,38 @@ type RegistrationStatus struct {
 // registrationRequest is the private registration message exchanged with the
 // coordinator. The registration key identifies one FileSync installation.
 type registrationRequest struct {
-	RegistrationKey string `json:"registrationKey"`
+	RegistrationKey string `json:"registrationKey,omitempty"`
 	DeviceID        string `json:"deviceId"`
 	Name            string `json:"name"`
 	Port            int    `json:"port"`
+	PairingCode     string `json:"pairingCode,omitempty"`
 }
 
 // Rabindra Neupane
 // DeviceRegistry owns persistent identity, coordinator settings, heartbeat
 // state, registered-device queries, and the optional chunk-location service.
 type DeviceRegistry struct {
-	chunkLocations ChunkLocationStore
-	mutex          sync.Mutex
-	database       *sql.DB
-	settings       DeviceSettings
-	settingsPath   string
-	name           string
-	port           int
-	localAddress   string
-	registered     bool
-	lastError      string
-	generation     uint64
-	started        int64
-	serviceContext context.Context
-	cancelService  context.CancelFunc
-	wakeSignal     chan struct{}
-	doneSignal     chan struct{}
+	chunkLocations     ChunkLocationStore
+	mutex              sync.Mutex
+	database           *sql.DB
+	settings           DeviceSettings
+	settingsPath       string
+	name               string
+	port               int
+	localAddress       string
+	registered         bool
+	lastError          string
+	generation         uint64
+	started            int64
+	serviceContext     context.Context
+	cancelService      context.CancelFunc
+	wakeSignal         chan struct{}
+	doneSignal         chan struct{}
+	pendingPairingCode string
+	activePairingCode  string
+	activePairingUntil time.Time
+	usedNonces         map[string]time.Time
+	pairingAttempts    map[string]pairingAttempt
 }
 
 // Rabindra Neupane
@@ -129,7 +135,7 @@ func OpenDeviceRegistry(applicationContext context.Context, database *sql.DB, pr
 	// Create a cancellable context for the background registration service.
 	serviceContext, cancelService := context.WithCancel(applicationContext)
 	// Create the registry with its saved identity and runtime channels.
-	registry := &DeviceRegistry{database: database, settings: deviceSettings, settingsPath: settingsPath, name: deviceName, port: serverPort, started: time.Now().UnixNano(), serviceContext: serviceContext, cancelService: cancelService, wakeSignal: make(chan struct{}, 1), doneSignal: make(chan struct{})}
+	registry := &DeviceRegistry{database: database, settings: deviceSettings, settingsPath: settingsPath, name: deviceName, port: serverPort, started: time.Now().UnixNano(), serviceContext: serviceContext, cancelService: cancelService, wakeSignal: make(chan struct{}, 1), doneSignal: make(chan struct{}), usedNonces: make(map[string]time.Time), pairingAttempts: make(map[string]pairingAttempt)}
 	// Save the complete settings so a new key survives future restarts.
 	if settingsSavingError := registry.saveSettingsLocked(deviceSettings); settingsSavingError != nil {
 		cancelService()
@@ -193,14 +199,26 @@ func validateCoordinatorAddress(coordinatorAddress string) error {
 // Rabindra Neupane
 // Configure switches coordinator mode or selects a remote coordinator. Changing
 // coordinators clears the old assigned ID so the new coordinator can register it.
-func (registry *DeviceRegistry) Configure(isCoordinator bool, coordinatorAddress string) error {
+func (registry *DeviceRegistry) Configure(isCoordinator bool, coordinatorAddress string, pairingCode string) error {
 	// Normalize the value entered by the user.
 	coordinatorAddress = strings.TrimSpace(coordinatorAddress)
+	pairingCode = strings.TrimSpace(pairingCode)
 	// Clear the address in coordinator mode or validate a remote address.
 	if isCoordinator {
 		coordinatorAddress = ""
 	} else if coordinatorAddressValidationError := validateCoordinatorAddress(coordinatorAddress); coordinatorAddressValidationError != nil {
 		return coordinatorAddressValidationError
+	}
+	// Validate the optional code before saving client configuration.
+	if !isCoordinator && pairingCode != "" {
+		if len(pairingCode) != 6 {
+			return fmt.Errorf("pairing code must contain six digits")
+		}
+		for _, digit := range pairingCode {
+			if digit < '0' || digit > '9' {
+				return fmt.Errorf("pairing code must contain six digits")
+			}
+		}
 	}
 	// Lock the registry while changing and saving its configuration.
 	registry.mutex.Lock()
@@ -219,6 +237,7 @@ func (registry *DeviceRegistry) Configure(isCoordinator bool, coordinatorAddress
 	}
 	// Reset registration state so the background service registers again.
 	registry.settings = updatedSettings
+	registry.pendingPairingCode = pairingCode
 	registry.generation++
 	registry.registered = false
 	registry.lastError = "Registering..."
@@ -284,17 +303,53 @@ func (registry *DeviceRegistry) registrationHandler(responseWriter http.Response
 		http.Error(responseWriter, "Only POST requests are allowed", 405)
 		return
 	}
+	// Read and preserve the exact body covered by the request signature.
+	requestBody, requestBodyReadingError := readAuthenticationBody(responseWriter, httpRequest)
+	if requestBodyReadingError != nil {
+		http.Error(responseWriter, "Invalid registration request", http.StatusBadRequest)
+		return
+	}
 	// Decode one strict registration request from the device.
 	var registration registrationRequest
 	if registrationRequestReadingError := readTransferJSON(responseWriter, httpRequest, &registration); registrationRequestReadingError != nil {
 		http.Error(responseWriter, "Invalid registration request", 400)
 		return
 	}
-	// Decode and validate identity, name, and port fields.
-	registrationKey, registrationKeyDecodingError := hex.DecodeString(registration.RegistrationKey)
-	if registrationKeyDecodingError != nil || len(registrationKey) != 16 || registration.Name == "" || len(registration.Name) > 255 || registration.Port < 1 || registration.Port > 65535 {
+	// Validate the common device identity, name, and port fields.
+	if registration.Name == "" || len(registration.Name) > 255 || registration.Port < 1 || registration.Port > 65535 {
 		http.Error(responseWriter, "Invalid device registration fields", 400)
 		return
+	}
+	// Authenticate heartbeats with the secret already assigned to this device.
+	if heartbeat {
+		if _, heartbeatAuthenticationError := registry.authenticateRegisteredRequest(httpRequest, requestBody, registration.DeviceID); heartbeatAuthenticationError != nil {
+			http.Error(responseWriter, heartbeatAuthenticationError.Error(), http.StatusUnauthorized)
+			return
+		}
+	} else {
+		// Validate the installation secret included only during registration.
+		registrationKey, registrationKeyDecodingError := hex.DecodeString(registration.RegistrationKey)
+		if registrationKeyDecodingError != nil || len(registrationKey) != 16 {
+			http.Error(responseWriter, "Invalid device registration fields", http.StatusBadRequest)
+			return
+		}
+		// Require the header identity and body identity to describe the same device.
+		if httpRequest.Header.Get(deviceIDHeader) != registration.DeviceID {
+			http.Error(responseWriter, "Registration identity does not match the signed request", http.StatusUnauthorized)
+			return
+		}
+		if registrationSignatureError := verifyRequestSignature(httpRequest, requestBody, registration.RegistrationKey); registrationSignatureError != nil {
+			http.Error(responseWriter, registrationSignatureError.Error(), http.StatusUnauthorized)
+			return
+		}
+		registrationPrincipal := registration.DeviceID
+		if registrationPrincipal == "" {
+			registrationPrincipal = registration.RegistrationKey
+		}
+		if nonceRecordingError := registry.rememberRequestNonce(registrationPrincipal, httpRequest.Header.Get(nonceHeader)); nonceRecordingError != nil {
+			http.Error(responseWriter, nonceRecordingError.Error(), http.StatusUnauthorized)
+			return
+		}
 	}
 	// Read the peer IP from the network connection instead of trusting JSON.
 	deviceIP, _, remoteAddressParsingError := net.SplitHostPort(httpRequest.RemoteAddr)
@@ -323,9 +378,14 @@ func (registry *DeviceRegistry) acceptRegistration(requestContext context.Contex
 	if !registry.settings.Coordinator {
 		return Device{}, fmt.Errorf("this device is not the coordinator")
 	}
-	// Look up an existing device by its private registration key.
+	// Look up an existing device by its private registration key or assigned ID.
 	var deviceID string
-	registrationLookupError := registry.database.QueryRowContext(requestContext, "SELECT device_id FROM device_registry WHERE registration_key=?", registration.RegistrationKey).Scan(&deviceID)
+	var registrationLookupError error
+	if heartbeat {
+		registrationLookupError = registry.database.QueryRowContext(requestContext, "SELECT device_id FROM device_registry WHERE device_id=?", registration.DeviceID).Scan(&deviceID)
+	} else {
+		registrationLookupError = registry.database.QueryRowContext(requestContext, "SELECT device_id FROM device_registry WHERE registration_key=?", registration.RegistrationKey).Scan(&deviceID)
+	}
 	// Reject a heartbeat when its device is unknown or uses the wrong ID.
 	if heartbeat && (registrationLookupError == sql.ErrNoRows || (registrationLookupError == nil && deviceID != registration.DeviceID)) {
 		return Device{}, fmt.Errorf("device must register before sending heartbeats")
@@ -336,18 +396,42 @@ func (registry *DeviceRegistry) acceptRegistration(requestContext context.Contex
 	}
 	// Create a stable device ID for a new registration key.
 	if registrationLookupError == sql.ErrNoRows {
+		// Require a live single-use code before accepting an unknown installation.
+		localCoordinator := registration.RegistrationKey == registry.settings.RegistrationKey
+		pairingActive := registry.activePairingUntil.After(time.Now())
+		if !localCoordinator {
+			if !registry.pairingAllowedLocked(deviceIP) {
+				return Device{}, fmt.Errorf("too many pairing attempts; try again later")
+			}
+			if !pairingActive || !pairingCodeMatches(registration.PairingCode, registry.activePairingCode) {
+				registry.recordPairingFailureLocked(deviceIP)
+				return Device{}, fmt.Errorf("coordinator pairing is closed or the pairing code is invalid")
+			}
+		}
 		var tokenGenerationError error
 		deviceID, tokenGenerationError = newDeviceToken()
 		if tokenGenerationError != nil {
 			return Device{}, tokenGenerationError
 		}
+		// Close the pairing window after one remote device is approved.
+		if !localCoordinator {
+			registry.activePairingCode = ""
+			registry.activePairingUntil = time.Time{}
+			delete(registry.pairingAttempts, deviceIP)
+		}
 	}
 	// Record the current time for online and offline tracking.
 	lastSeenTime := time.Now().UnixNano()
-	// Insert a new registration or refresh the existing device details.
-	_, registrationSavingError := registry.database.ExecContext(requestContext, `INSERT INTO device_registry (registration_key,device_id,name,ip,port,last_seen)
-		VALUES (?,?,?,?,?,?) ON CONFLICT(registration_key) DO UPDATE SET name=excluded.name,
-		ip=excluded.ip,port=excluded.port,last_seen=excluded.last_seen`, registration.RegistrationKey, deviceID, registration.Name, deviceIP, registration.Port, lastSeenTime)
+	// Refresh a known heartbeat without sending or replacing its saved secret.
+	var registrationSavingError error
+	if heartbeat {
+		_, registrationSavingError = registry.database.ExecContext(requestContext, "UPDATE device_registry SET name=?,ip=?,port=?,last_seen=? WHERE device_id=?", registration.Name, deviceIP, registration.Port, lastSeenTime, deviceID)
+	} else {
+		// Insert a new registration or refresh a known installation.
+		_, registrationSavingError = registry.database.ExecContext(requestContext, `INSERT INTO device_registry (registration_key,device_id,name,ip,port,last_seen)
+			VALUES (?,?,?,?,?,?) ON CONFLICT(registration_key) DO UPDATE SET name=excluded.name,
+			ip=excluded.ip,port=excluded.port,last_seen=excluded.last_seen`, registration.RegistrationKey, deviceID, registration.Name, deviceIP, registration.Port, lastSeenTime)
+	}
 	if registrationSavingError != nil {
 		return Device{}, registrationSavingError
 	}
@@ -362,6 +446,11 @@ func (registry *DeviceRegistry) devicesHandler(responseWriter http.ResponseWrite
 	if httpRequest.Method != http.MethodGet {
 		responseWriter.Header().Set("Allow", "GET")
 		http.Error(responseWriter, "Only GET requests are allowed", 405)
+		return
+	}
+	// Require a signed request before exposing the registered-device list.
+	if _, deviceListAuthenticationError := registry.authenticateRegisteredRequest(httpRequest, nil, ""); deviceListAuthenticationError != nil {
+		http.Error(responseWriter, deviceListAuthenticationError.Error(), http.StatusUnauthorized)
 		return
 	}
 	// Read the latest registered-device list from coordinator storage.

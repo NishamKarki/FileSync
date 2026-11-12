@@ -44,11 +44,11 @@ export namespace main {
 	    senderDeviceId: string;
 	    conflictCopy: string;
 	    detectedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ConflictRecord(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -64,11 +64,11 @@ export namespace main {
 	export class ConflictResolution {
 	    fileId: string;
 	    message: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ConflictResolution(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.fileId = source["fileId"];
@@ -154,6 +154,22 @@ export namespace network {
 	        this.online = source["online"];
 	        this.lastSeen = source["lastSeen"];
 	        this.coordinator = source["coordinator"];
+	    }
+	}
+	export class PairingStatus {
+	    active: boolean;
+	    code?: string;
+	    expiresAt?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PairingStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.active = source["active"];
+	        this.code = source["code"];
+	        this.expiresAt = source["expiresAt"];
 	    }
 	}
 	export class PingResponse {

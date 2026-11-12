@@ -356,13 +356,46 @@ func (app *App) startup(ctx context.Context) {
 
 // Rabindra Neupane
 // ConfigureCoordinator applies the coordinator role or remote address from the frontend.
-func (app *App) ConfigureCoordinator(coordinator bool, address string) error {
+func (app *App) ConfigureCoordinator(coordinator bool, address string, pairingCode string) error {
 	// Check that startup created the device registry.
 	if app.deviceRegistry == nil {
 		return fmt.Errorf("device registration is unavailable; check startup logs")
 	}
 	// Save the new role or coordinator address.
-	return app.deviceRegistry.Configure(coordinator, address)
+	return app.deviceRegistry.Configure(coordinator, address, pairingCode)
+}
+
+// Rabindra Neupane
+// StartCoordinatorPairing creates a temporary single-use code for one new client.
+func (app *App) StartCoordinatorPairing() (network.PairingStatus, error) {
+	// Check that startup created the device registry.
+	if app.deviceRegistry == nil {
+		return network.PairingStatus{}, fmt.Errorf("device registration is unavailable")
+	}
+	// Open the secure pairing window on the local coordinator.
+	return app.deviceRegistry.StartPairing()
+}
+
+// Rabindra Neupane
+// GetCoordinatorPairingStatus returns the local pairing window for display.
+func (app *App) GetCoordinatorPairingStatus() (network.PairingStatus, error) {
+	// Check that startup created the device registry.
+	if app.deviceRegistry == nil {
+		return network.PairingStatus{}, fmt.Errorf("device registration is unavailable")
+	}
+	// Return the current local pairing state.
+	return app.deviceRegistry.GetPairingStatus(), nil
+}
+
+// Rabindra Neupane
+// RemoveRegisteredDevice revokes a client credential on the coordinator.
+func (app *App) RemoveRegisteredDevice(deviceID string) error {
+	// Check that startup created the device registry.
+	if app.deviceRegistry == nil {
+		return fmt.Errorf("device registration is unavailable")
+	}
+	// Remove the selected device and invalidate its future signed requests.
+	return app.deviceRegistry.RevokeDevice(deviceID)
 }
 
 // Rabindra Neupane

@@ -41,10 +41,10 @@ func pingHandler(responseWriter http.ResponseWriter, _ *http.Request, registry *
 		Message:    "FileSync Client is Online",
 		DeviceName: deviceName,
 	}
-	// Add persistent identity and coordinator role when the registry is ready.
+	// Add only the coordinator role; keep the persistent device ID private until authentication.
 	if registry != nil {
 		registrationStatus := registry.Status()
-		pingResponse.DeviceID, pingResponse.Coordinator = registrationStatus.DeviceID, registrationStatus.Coordinator
+		pingResponse.Coordinator = registrationStatus.Coordinator
 	}
 	json.NewEncoder(responseWriter).Encode(pingResponse)
 }

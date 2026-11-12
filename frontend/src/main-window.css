@@ -140,6 +140,25 @@ button:hover {
     font-size: 0.85rem;
 }
 
+/* Pairing status shows the temporary code without stretching the device panel. */
+#pairing-status {
+    overflow-wrap: anywhere;
+    font-size: 0.85rem;
+}
+
+/* Keep each registered device and its revoke action together. */
+.device-entry {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+/* Make credential revocation visually separate from selecting a sync target. */
+.remove-device-button {
+    justify-self: end;
+    padding: 6px 10px;
+}
+
 /* Registration info shown as label / value rows */
 .registration-details {
     display: grid;

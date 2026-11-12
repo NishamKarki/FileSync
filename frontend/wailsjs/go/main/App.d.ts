@@ -8,13 +8,15 @@ export function AddFiles():Promise<main.FileImportResult>;
 
 export function ChunkFile(arg1:string):Promise<Array<main.Chunk>>;
 
-export function ConfigureCoordinator(arg1:boolean,arg2:string):Promise<void>;
+export function ConfigureCoordinator(arg1:boolean,arg2:string,arg3:string):Promise<void>;
 
 export function DiscoverDevices():Promise<Array<network.Device>>;
 
 export function FileWatcher(arg1:string):Promise<void>;
 
 export function GetConflicts():Promise<Array<main.ConflictRecord>>;
+
+export function GetCoordinatorPairingStatus():Promise<network.PairingStatus>;
 
 export function GetLocalIP():Promise<string>;
 
@@ -30,6 +32,8 @@ export function PingDevice(arg1:string):Promise<network.PingResponse>;
 
 export function ReconstructFile(arg1:string):Promise<void>;
 
+export function RemoveRegisteredDevice(arg1:string):Promise<void>;
+
 export function ResolveConflict(arg1:number,arg2:string):Promise<main.ConflictResolution>;
 
 export function SaveChunks(arg1:string,arg2:Array<main.Chunk>):Promise<void>;
@@ -37,5 +41,7 @@ export function SaveChunks(arg1:string,arg2:Array<main.Chunk>):Promise<void>;
 export function ScheduleFileProcessing(arg1:string):Promise<void>;
 
 export function SendFile(arg1:string,arg2:string):Promise<main.SyncResult>;
+
+export function StartCoordinatorPairing():Promise<network.PairingStatus>;
 
 export function SyncFile(arg1:string,arg2:string):Promise<main.SyncResult>;

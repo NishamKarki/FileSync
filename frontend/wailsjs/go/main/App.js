@@ -10,8 +10,8 @@ export function ChunkFile(arg1) {
   return window['go']['main']['App']['ChunkFile'](arg1);
 }
 
-export function ConfigureCoordinator(arg1, arg2) {
-  return window['go']['main']['App']['ConfigureCoordinator'](arg1, arg2);
+export function ConfigureCoordinator(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ConfigureCoordinator'](arg1, arg2, arg3);
 }
 
 export function DiscoverDevices() {
@@ -24,6 +24,10 @@ export function FileWatcher(arg1) {
 
 export function GetConflicts() {
   return window['go']['main']['App']['GetConflicts']();
+}
+
+export function GetCoordinatorPairingStatus() {
+  return window['go']['main']['App']['GetCoordinatorPairingStatus']();
 }
 
 export function GetLocalIP() {
@@ -54,6 +58,10 @@ export function ReconstructFile(arg1) {
   return window['go']['main']['App']['ReconstructFile'](arg1);
 }
 
+export function RemoveRegisteredDevice(arg1) {
+  return window['go']['main']['App']['RemoveRegisteredDevice'](arg1);
+}
+
 export function ResolveConflict(arg1, arg2) {
   return window['go']['main']['App']['ResolveConflict'](arg1, arg2);
 }
@@ -68,6 +76,10 @@ export function ScheduleFileProcessing(arg1) {
 
 export function SendFile(arg1, arg2) {
   return window['go']['main']['App']['SendFile'](arg1, arg2);
+}
+
+export function StartCoordinatorPairing() {
+  return window['go']['main']['App']['StartCoordinatorPairing']();
 }
 
 export function SyncFile(arg1, arg2) {

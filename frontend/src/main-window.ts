@@ -12,7 +12,10 @@ import {
     SyncFile,
     ConfigureCoordinator,
     GetRegistrationStatus,
-    GetRegisteredDevices
+    GetRegisteredDevices,
+    StartCoordinatorPairing,
+    GetCoordinatorPairingStatus,
+    RemoveRegisteredDevice
 } from '../wailsjs/go/main/App';
 
 // EventsOn listens for events sent from Go, like the file changes from fileWatcher.go
@@ -72,7 +75,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
                     <label><input type="checkbox" id="coordinator-mode"> This computer is the coordinator</label>
                     <label for="coordinator-address">Coordinator IP:port</label>
                     <input id="coordinator-address" placeholder="192.168.1.10:8080" autocomplete="off">
+                    <label id="pairing-code-label" for="pairing-code">Pairing code for a new client</label>
+                    <input id="pairing-code" maxlength="6" inputmode="numeric" placeholder="6-digit code" autocomplete="one-time-code">
                     <button id="save-coordinator-button">Apply Coordinator Settings</button>
+                    <button id="start-pairing-button" hidden>Allow New Device for 2 Minutes</button>
+                    <div id="pairing-status" aria-live="polite"></div>
                     <div id="registration-status" aria-live="polite">Loading device registration...</div>
                 </div>
                 <button id="find-coordinator-button">Find Coordinator</button>
@@ -156,6 +163,7 @@ let registrationRefreshRunning = false;
 let registrationSettingsLoaded = false;
 let registrationSettingsEdited = false;
 let ownDeviceID = '';
+let ownDeviceIsCoordinator = false;
 
 // Rabindra Neupane
 // A device as it comes back from the coordinator
@@ -244,7 +252,34 @@ function renderDevices(devices: ListedDevice[]) {
             container.querySelectorAll('.device').forEach(element => element.classList.remove('selected-device'));
             row.classList.add('selected-device');
         });
-        container.appendChild(row);
+        // Group the selectable device card with its coordinator-only revoke action.
+        const deviceEntry = document.createElement('div');
+        deviceEntry.className = 'device-entry';
+        deviceEntry.appendChild(row);
+        if (ownDeviceIsCoordinator && !device.coordinator) {
+            const removeButton = document.createElement('button');
+            removeButton.type = 'button';
+            removeButton.className = 'remove-device-button';
+            removeButton.textContent = 'Remove device';
+            removeButton.addEventListener('click', async () => {
+                // Confirm the destructive credential revocation with the coordinator user.
+                if (!window.confirm(`Remove ${device.name || 'this device'} from the coordinator?`)) return;
+                removeButton.disabled = true;
+                try {
+                    await RemoveRegisteredDevice(device.id);
+                    if (selectedDeviceID === device.id) {
+                        selectedDeviceID = null;
+                        selectedDeviceAddress = null;
+                    }
+                    await refreshRegistration();
+                } catch (error) {
+                    window.alert(`Cannot remove device: ${error}`);
+                    removeButton.disabled = false;
+                }
+            });
+            deviceEntry.appendChild(removeButton);
+        }
+        container.appendChild(deviceEntry);
     }
 }
 
@@ -310,6 +345,7 @@ async function refreshRegistration() {
     try {
         const status = await GetRegistrationStatus();
         ownDeviceID = status.deviceId;
+        ownDeviceIsCoordinator = status.coordinator;
         const mode = document.querySelector<HTMLInputElement>('#coordinator-mode');
         const address = document.querySelector<HTMLInputElement>('#coordinator-address');
         // Fill in the saved settings once at startup, but never over something the user is typing
@@ -318,6 +354,7 @@ async function refreshRegistration() {
             address.value = status.coordinatorAddress;
             address.disabled = mode.checked;
         }
+        updateCoordinatorSecurityControls(status.coordinator);
         registrationSettingsLoaded = true;
         if (label) {
             renderRegistrationStatus(label, status);
@@ -327,6 +364,13 @@ async function refreshRegistration() {
             const devices = await GetRegisteredDevices();
             if (!showingDiscovery) renderDevices(devices);
         }
+        // Clear a one-time client code after successful registration.
+        if (status.registered && !status.coordinator) {
+            const pairingCode = document.querySelector<HTMLInputElement>('#pairing-code');
+            if (pairingCode) pairingCode.value = '';
+        }
+        // Refresh the temporary pairing code only on the coordinator.
+        if (status.coordinator) await refreshPairingStatus();
     } catch (error) {
         if (label) label.textContent = `Registration: ${error}`;
         if (!showingDiscovery) {
@@ -343,17 +387,53 @@ async function refreshRegistration() {
 // Coordinator settings: the checkbox, the address box and the Apply button
 const coordinatorMode = document.querySelector<HTMLInputElement>('#coordinator-mode');
 const coordinatorAddress = document.querySelector<HTMLInputElement>('#coordinator-address');
+const pairingCodeInput = document.querySelector<HTMLInputElement>('#pairing-code');
+const pairingCodeLabel = document.querySelector<HTMLElement>('#pairing-code-label');
+const startPairingButton = document.querySelector<HTMLButtonElement>('#start-pairing-button');
+
+// Rabindra Neupane
+// updateCoordinatorSecurityControls switches between coordinator and client pairing controls.
+function updateCoordinatorSecurityControls(coordinator: boolean) {
+    // Show code entry only to clients and code generation only to coordinators.
+    if (pairingCodeInput) pairingCodeInput.hidden = coordinator;
+    if (pairingCodeLabel) pairingCodeLabel.hidden = coordinator;
+    if (startPairingButton) startPairingButton.hidden = !coordinator;
+    if (coordinatorAddress) coordinatorAddress.disabled = coordinator;
+}
+
+// Rabindra Neupane
+// refreshPairingStatus displays the active code and its local expiration time.
+async function refreshPairingStatus() {
+    // Stop when the pairing status area is not available.
+    const pairingStatus = document.getElementById('pairing-status');
+    if (!pairingStatus) return;
+    try {
+        const status = await GetCoordinatorPairingStatus();
+        if (!status.active) {
+            pairingStatus.textContent = 'Pairing is closed.';
+            return;
+        }
+        pairingStatus.textContent = `Pairing code: ${status.code ?? 'Unavailable'}. Expires ${status.expiresAt ? formatLastSeen(status.expiresAt) : 'soon'}.`;
+    } catch (error) {
+        pairingStatus.textContent = `Cannot read pairing status: ${error}`;
+    }
+}
 // No address needed when this computer is the coordinator itself
 coordinatorMode?.addEventListener('change', () => {
     registrationSettingsEdited = true;
-    if (coordinatorAddress) coordinatorAddress.disabled = coordinatorMode.checked;
+    updateCoordinatorSecurityControls(coordinatorMode.checked);
 });
 coordinatorAddress?.addEventListener('input', () => { registrationSettingsEdited = true; });
+pairingCodeInput?.addEventListener('input', () => {
+    // Keep the one-time code numeric and at most six digits.
+    pairingCodeInput.value = pairingCodeInput.value.replace(/\D/g, '').slice(0, 6);
+    registrationSettingsEdited = true;
+});
 const saveCoordinatorButton = document.querySelector<HTMLButtonElement>('#save-coordinator-button');
 saveCoordinatorButton?.addEventListener('click', async () => {
     saveCoordinatorButton.disabled = true;
     try {
-        await ConfigureCoordinator(coordinatorMode?.checked ?? false, coordinatorAddress?.value ?? '');
+        await ConfigureCoordinator(coordinatorMode?.checked ?? false, coordinatorAddress?.value ?? '', pairingCodeInput?.value ?? '');
         showingDiscovery = false;
         await refreshRegistration();
     } catch (error) {
@@ -361,6 +441,20 @@ saveCoordinatorButton?.addEventListener('click', async () => {
         if (status) status.textContent = `Cannot apply settings: ${error}`;
     } finally {
         saveCoordinatorButton.disabled = false;
+    }
+});
+
+// Start a short single-use pairing window when requested by the coordinator.
+startPairingButton?.addEventListener('click', async () => {
+    startPairingButton.disabled = true;
+    try {
+        await StartCoordinatorPairing();
+        await refreshPairingStatus();
+    } catch (error) {
+        const pairingStatus = document.getElementById('pairing-status');
+        if (pairingStatus) pairingStatus.textContent = `Cannot start pairing: ${error}`;
+    } finally {
+        startPairingButton.disabled = false;
     }
 });
 // Registered Devices goes back from the discovery list to the normal device list
