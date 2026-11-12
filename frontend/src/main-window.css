@@ -166,6 +166,13 @@ button:hover {
     color: #c5c5c5;
     font-size: 0.82rem;
 }
+
+/* Show discovered coordinators directly below the Find Coordinator button. */
+#coordinator-search-results:not(:empty) {
+    display: grid;
+    gap: 8px;
+    margin-top: 4px;
+}
 /* The text box only, not the checkbox. min-width 0 stops it from overflowing the panel */
 .coordinator-controls input:not([type="checkbox"]) {
     padding: 8px;

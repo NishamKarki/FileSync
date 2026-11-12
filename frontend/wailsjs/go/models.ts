@@ -134,6 +134,7 @@ export namespace network {
 	
 	export class Device {
 	    id: string;
+	    coordinatorId?: string;
 	    name: string;
 	    ip: string;
 	    port: number;
@@ -148,6 +149,7 @@ export namespace network {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
+	        this.coordinatorId = source["coordinatorId"];
 	        this.name = source["name"];
 	        this.ip = source["ip"];
 	        this.port = source["port"];
@@ -200,6 +202,8 @@ export namespace network {
 	    coordinatorAddress: string;
 	    configured: boolean;
 	    registered: boolean;
+	    state: string;
+	    retryInSeconds: number;
 	    lastError: string;
 	
 	    static createFrom(source: any = {}) {
@@ -215,6 +219,8 @@ export namespace network {
 	        this.coordinatorAddress = source["coordinatorAddress"];
 	        this.configured = source["configured"];
 	        this.registered = source["registered"];
+	        this.state = source["state"];
+	        this.retryInSeconds = source["retryInSeconds"];
 	        this.lastError = source["lastError"];
 	    }
 	}

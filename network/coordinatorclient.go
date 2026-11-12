@@ -4,9 +4,12 @@ package network
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"strconv"
@@ -46,11 +49,21 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 	registry.mutex.Lock()
 	deviceSettings := registry.settings
 	pendingPairingCode := registry.pendingPairingCode
+	pairingRetryPaused := registry.pairingRetryPaused
+	nextAttempt := registry.nextAttempt
 	settingsGeneration := registry.generation
 	registry.mutex.Unlock()
 
 	// Stop when a client has no coordinator configured yet.
 	if !deviceSettings.Coordinator && deviceSettings.CoordinatorAddress == "" {
+		return
+	}
+	// Pause rejected pairing attempts until the user submits a new code.
+	if !deviceSettings.Coordinator && pairingRetryPaused {
+		return
+	}
+	// Wait for the current backoff period before another network attempt.
+	if nextAttempt.After(time.Now()) {
 		return
 	}
 
@@ -82,10 +95,10 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 				false,
 			)
 		} else {
-			// Choose registration for a new client and heartbeat for a known client.
+			// Choose registration for a new client or an explicit re-pairing attempt.
 			requestPath := "/devices/register"
 			// Use heartbeat after this installation has an assigned ID.
-			if registration.DeviceID != "" {
+			if registration.DeviceID != "" && pendingPairingCode == "" {
 				requestPath = "/devices/heartbeat"
 				registration.RegistrationKey = ""
 				registration.PairingCode = ""
@@ -100,7 +113,7 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 			)
 
 			// Retry full registration when a heartbeat identity is no longer known.
-			if registrationError != nil && requestPath == "/devices/heartbeat" {
+			if registrationError != nil && requestPath == "/devices/heartbeat" && pendingPairingCode != "" {
 				// Restore the secret field required by the registration endpoint.
 				registration.RegistrationKey = deviceSettings.RegistrationKey
 				registration.PairingCode = pendingPairingCode
@@ -130,12 +143,24 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 	if registrationError == nil && registeredDevice.DeviceID == "" {
 		registrationError = fmt.Errorf("coordinator returned an empty device ID")
 	}
+	// Require a stable coordinator identity on every successful remote response.
+	if registrationError == nil && !deviceSettings.Coordinator {
+		if registeredDevice.CoordinatorID == "" {
+			registrationError = &coordinatorError{Code: coordinatorErrorIdentityChanged, Message: "coordinator did not provide a trusted identity", StatusCode: http.StatusUnauthorized}
+		} else if deviceSettings.CoordinatorID != "" && registeredDevice.CoordinatorID != deviceSettings.CoordinatorID && pendingPairingCode == "" {
+			registrationError = &coordinatorError{Code: coordinatorErrorIdentityChanged, Message: "coordinator identity changed; enter a new pairing code to trust it", StatusCode: http.StatusUnauthorized}
+		}
+	}
 
-	// Save a newly assigned device ID so it survives application restarts.
-	if registrationError == nil && registeredDevice.DeviceID != registry.settings.DeviceID {
+	// Save newly assigned device and coordinator identities across application restarts.
+	if registrationError == nil && (registeredDevice.DeviceID != registry.settings.DeviceID ||
+		(registeredDevice.CoordinatorID != "" && registeredDevice.CoordinatorID != registry.settings.CoordinatorID)) {
 		// Copy the current settings before changing the persistent ID.
 		updatedSettings := registry.settings
 		updatedSettings.DeviceID = registeredDevice.DeviceID
+		if registeredDevice.CoordinatorID != "" {
+			updatedSettings.CoordinatorID = registeredDevice.CoordinatorID
+		}
 
 		// Save the new identity before updating shared memory.
 		settingsSavingError := registry.saveSettingsLocked(updatedSettings)
@@ -149,15 +174,77 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 	// Clear a submitted pairing code after the coordinator accepts registration.
 	if registrationError == nil {
 		registry.pendingPairingCode = ""
+		registry.pairingRetryPaused = false
+		registry.registered = true
+		registry.registrationState = RegistrationRegistered
+		registry.lastError = ""
+		registry.retryDelay = 5 * time.Second
+		registry.nextAttempt = time.Now().Add(5 * time.Second)
+		return
 	}
 
 	// Update the public registration state after this heartbeat attempt.
-	registry.registered = registrationError == nil
-	registry.lastError = ""
+	registry.registered = false
 	// Save and log the latest registration error for the frontend.
 	if registrationError != nil {
+		// Stop authentication failures until the user supplies a new pairing code.
+		errorCode := coordinatorErrorCode(registrationError)
+		switch errorCode {
+		case coordinatorErrorPairingRequired, coordinatorErrorPairingInvalid, coordinatorErrorPairingBlocked:
+			registry.pendingPairingCode = ""
+			registry.pairingRetryPaused = true
+			registry.registrationState = RegistrationPairingNeeded
+			registry.nextAttempt = time.Time{}
+		case coordinatorErrorDeviceRevoked:
+			registry.pendingPairingCode = ""
+			registry.pairingRetryPaused = true
+			registry.registrationState = RegistrationRevoked
+			registry.nextAttempt = time.Time{}
+		case coordinatorErrorIdentityChanged:
+			registry.pendingPairingCode = ""
+			registry.pairingRetryPaused = true
+			registry.registrationState = RegistrationPairingNeeded
+			registry.nextAttempt = time.Time{}
+		default:
+			// Retry temporary failures with a bounded exponential delay.
+			if deviceSettings.DeviceID != "" {
+				registry.registrationState = RegistrationReconnecting
+			} else {
+				registry.registrationState = RegistrationRegistering
+			}
+			registry.scheduleRetryLocked()
+		}
 		registry.lastError = registrationError.Error()
 		fmt.Println("Device registration:", registrationError)
+	}
+}
+
+// Rabindra Neupane
+// coordinatorErrorCode returns a stable coordinator recovery code when available.
+func coordinatorErrorCode(requestError error) string {
+	// Read typed coordinator failures without depending on their displayed message.
+	var classifiedError *coordinatorError
+	if errors.As(requestError, &classifiedError) {
+		return classifiedError.Code
+	}
+	return ""
+}
+
+// Rabindra Neupane
+// scheduleRetryLocked increases temporary retry delays up to thirty seconds.
+func (registry *DeviceRegistry) scheduleRetryLocked() {
+	// Start at five seconds and add small jitter so clients do not retry together.
+	if registry.retryDelay < 5*time.Second {
+		registry.retryDelay = 5 * time.Second
+	}
+	retryJitter := time.Duration(0)
+	if randomDelay, randomDelayError := cryptorand.Int(cryptorand.Reader, big.NewInt(2001)); randomDelayError == nil {
+		retryJitter = time.Duration(randomDelay.Int64()) * time.Millisecond
+	}
+	registry.nextAttempt = time.Now().Add(registry.retryDelay + retryJitter)
+	registry.retryDelay *= 2
+	if registry.retryDelay > 30*time.Second {
+		registry.retryDelay = 30 * time.Second
 	}
 }
 
@@ -228,6 +315,11 @@ func (registry *DeviceRegistry) registryRequest(
 	// Return a bounded coordinator error when the request is rejected.
 	if httpResponse.StatusCode != http.StatusOK {
 		responseDetails, _ := io.ReadAll(io.LimitReader(httpResponse.Body, 4096))
+		var classifiedError coordinatorError
+		if json.Unmarshal(responseDetails, &classifiedError) == nil && classifiedError.Code != "" {
+			classifiedError.StatusCode = httpResponse.StatusCode
+			return &classifiedError
+		}
 		return fmt.Errorf(
 			"coordinator returned %s: %s",
 			httpResponse.Status,

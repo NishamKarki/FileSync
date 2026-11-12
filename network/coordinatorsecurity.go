@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -168,15 +169,18 @@ func (registry *DeviceRegistry) authenticateRegisteredRequest(request *http.Requ
 	// Find the secret assigned to this registered device.
 	var registrationKey string
 	registrationLookupError := registry.database.QueryRowContext(request.Context(), "SELECT registration_key FROM device_registry WHERE device_id=?", deviceID).Scan(&registrationKey)
+	if registrationLookupError == sql.ErrNoRows {
+		return "", &coordinatorError{Code: coordinatorErrorDeviceRevoked, Message: "device registration was removed; pair again", StatusCode: http.StatusUnauthorized}
+	}
 	if registrationLookupError != nil {
-		return "", fmt.Errorf("device is not registered")
+		return "", &coordinatorError{Code: coordinatorErrorUnavailable, Message: "coordinator could not read device registration", StatusCode: http.StatusServiceUnavailable}
 	}
 	// Verify the signature before recording the nonce.
 	if signatureVerificationError := verifyRequestSignature(request, body, registrationKey); signatureVerificationError != nil {
-		return "", signatureVerificationError
+		return "", &coordinatorError{Code: coordinatorErrorAuthentication, Message: signatureVerificationError.Error(), StatusCode: http.StatusUnauthorized}
 	}
 	if nonceRecordingError := registry.rememberRequestNonce(deviceID, request.Header.Get(nonceHeader)); nonceRecordingError != nil {
-		return "", nonceRecordingError
+		return "", &coordinatorError{Code: coordinatorErrorAuthentication, Message: nonceRecordingError.Error(), StatusCode: http.StatusUnauthorized}
 	}
 	return deviceID, nil
 }

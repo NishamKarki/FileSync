@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 type DeviceSettings struct {
 	RegistrationKey    string `json:"registrationKey"`
 	DeviceID           string `json:"deviceId"`
+	CoordinatorID      string `json:"coordinatorId,omitempty"`
 	Coordinator        bool   `json:"coordinator"`
 	CoordinatorAddress string `json:"coordinatorAddress"`
 }
@@ -37,7 +39,54 @@ type RegistrationStatus struct {
 	CoordinatorAddress string `json:"coordinatorAddress"`
 	Configured         bool   `json:"configured"`
 	Registered         bool   `json:"registered"`
+	State              string `json:"state"`
+	RetryInSeconds     int    `json:"retryInSeconds"`
 	LastError          string `json:"lastError"`
+}
+
+// Rabindra Neupane
+// RegistrationState describes one clear step in the coordinator connection lifecycle.
+type RegistrationState string
+
+const (
+	RegistrationNotConfigured RegistrationState = "not-configured"
+	RegistrationPairingNeeded RegistrationState = "pairing-required"
+	RegistrationRegistering   RegistrationState = "registering"
+	RegistrationRegistered    RegistrationState = "registered"
+	RegistrationReconnecting  RegistrationState = "reconnecting"
+	RegistrationRevoked       RegistrationState = "revoked"
+)
+
+const (
+	coordinatorErrorPairingRequired = "PAIRING_REQUIRED"
+	coordinatorErrorPairingInvalid  = "PAIRING_INVALID"
+	coordinatorErrorPairingBlocked  = "PAIRING_BLOCKED"
+	coordinatorErrorDeviceRevoked   = "DEVICE_REVOKED"
+	coordinatorErrorAuthentication  = "AUTHENTICATION_FAILED"
+	coordinatorErrorUnavailable     = "COORDINATOR_UNAVAILABLE"
+	coordinatorErrorIdentityChanged = "COORDINATOR_IDENTITY_CHANGED"
+)
+
+// Rabindra Neupane
+// coordinatorError gives clients a stable recovery code instead of fragile error text.
+type coordinatorError struct {
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	StatusCode int    `json:"-"`
+}
+
+// Rabindra Neupane
+// Error returns the readable coordinator failure message.
+func (failure *coordinatorError) Error() string {
+	return failure.Message
+}
+
+// Rabindra Neupane
+// writeCoordinatorError sends a bounded JSON error that clients can classify safely.
+func writeCoordinatorError(responseWriter http.ResponseWriter, failure *coordinatorError) {
+	responseWriter.Header().Set("Content-Type", "application/json")
+	responseWriter.WriteHeader(failure.StatusCode)
+	_ = json.NewEncoder(responseWriter).Encode(failure)
 }
 
 // Rabindra Neupane
@@ -64,7 +113,10 @@ type DeviceRegistry struct {
 	port               int
 	localAddress       string
 	registered         bool
+	registrationState  RegistrationState
 	lastError          string
+	retryDelay         time.Duration
+	nextAttempt        time.Time
 	generation         uint64
 	started            int64
 	serviceContext     context.Context
@@ -72,6 +124,7 @@ type DeviceRegistry struct {
 	wakeSignal         chan struct{}
 	doneSignal         chan struct{}
 	pendingPairingCode string
+	pairingRetryPaused bool
 	activePairingCode  string
 	activePairingUntil time.Time
 	usedNonces         map[string]time.Time
@@ -135,7 +188,14 @@ func OpenDeviceRegistry(applicationContext context.Context, database *sql.DB, pr
 	// Create a cancellable context for the background registration service.
 	serviceContext, cancelService := context.WithCancel(applicationContext)
 	// Create the registry with its saved identity and runtime channels.
-	registry := &DeviceRegistry{database: database, settings: deviceSettings, settingsPath: settingsPath, name: deviceName, port: serverPort, started: time.Now().UnixNano(), serviceContext: serviceContext, cancelService: cancelService, wakeSignal: make(chan struct{}, 1), doneSignal: make(chan struct{}), usedNonces: make(map[string]time.Time), pairingAttempts: make(map[string]pairingAttempt)}
+	initialState := RegistrationNotConfigured
+	if deviceSettings.Coordinator || deviceSettings.CoordinatorAddress != "" {
+		initialState = RegistrationRegistering
+	}
+	if !deviceSettings.Coordinator && deviceSettings.CoordinatorAddress != "" && deviceSettings.DeviceID == "" {
+		initialState = RegistrationPairingNeeded
+	}
+	registry := &DeviceRegistry{database: database, settings: deviceSettings, settingsPath: settingsPath, name: deviceName, port: serverPort, started: time.Now().UnixNano(), serviceContext: serviceContext, cancelService: cancelService, wakeSignal: make(chan struct{}, 1), doneSignal: make(chan struct{}), usedNonces: make(map[string]time.Time), pairingAttempts: make(map[string]pairingAttempt), registrationState: initialState, retryDelay: 5 * time.Second, pairingRetryPaused: initialState == RegistrationPairingNeeded}
 	// Save the complete settings so a new key survives future restarts.
 	if settingsSavingError := registry.saveSettingsLocked(deviceSettings); settingsSavingError != nil {
 		cancelService()
@@ -163,6 +223,11 @@ func (registry *DeviceRegistry) saveSettingsLocked(settings DeviceSettings) erro
 	}
 	// Remove the temporary file if any later step fails.
 	defer os.Remove(temporaryFile.Name())
+	// Limit the private identity file to the current operating-system user.
+	if settingsPermissionError := temporaryFile.Chmod(0600); settingsPermissionError != nil {
+		temporaryFile.Close()
+		return settingsPermissionError
+	}
 	// Write the settings and close the temporary file.
 	_, settingsWritingError := temporaryFile.Write(settingsData)
 	temporaryFileClosingError := temporaryFile.Close()
@@ -228,6 +293,7 @@ func (registry *DeviceRegistry) Configure(isCoordinator bool, coordinatorAddress
 	// Clear the assigned ID when switching to a different coordinator.
 	if isCoordinator != updatedSettings.Coordinator || coordinatorAddress != updatedSettings.CoordinatorAddress {
 		updatedSettings.DeviceID = ""
+		updatedSettings.CoordinatorID = ""
 	}
 	// Store the selected role and coordinator address in the copied settings.
 	updatedSettings.Coordinator, updatedSettings.CoordinatorAddress = isCoordinator, coordinatorAddress
@@ -236,11 +302,21 @@ func (registry *DeviceRegistry) Configure(isCoordinator bool, coordinatorAddress
 		return settingsSavingError
 	}
 	// Reset registration state so the background service registers again.
+	previousRegistrationState := registry.registrationState
 	registry.settings = updatedSettings
 	registry.pendingPairingCode = pairingCode
+	registry.pairingRetryPaused = false
 	registry.generation++
 	registry.registered = false
+	registry.registrationState = RegistrationRegistering
 	registry.lastError = "Registering..."
+	if !isCoordinator && pairingCode == "" && (updatedSettings.DeviceID == "" || previousRegistrationState == RegistrationRevoked) {
+		registry.registrationState = RegistrationPairingNeeded
+		registry.pairingRetryPaused = true
+		registry.lastError = "A pairing code is required"
+	}
+	registry.retryDelay = 5 * time.Second
+	registry.nextAttempt = time.Time{}
 	// Wake the background service without blocking if it is already awake.
 	select {
 	case registry.wakeSignal <- struct{}{}:
@@ -263,7 +339,14 @@ func (registry *DeviceRegistry) Status() RegistrationStatus {
 		coordinatorAddress = registry.localAddress
 	}
 	// Return a public copy without the private registration key.
-	return RegistrationStatus{DeviceID: registry.settings.DeviceID, DeviceName: registry.name, LocalAddress: registry.localAddress, Coordinator: registry.settings.Coordinator, CoordinatorAddress: coordinatorAddress, Configured: registry.settings.Coordinator || coordinatorAddress != "", Registered: registry.registered, LastError: registry.lastError}
+	retryInSeconds := 0
+	if registry.nextAttempt.After(time.Now()) {
+		retryInSeconds = int(time.Until(registry.nextAttempt).Round(time.Second) / time.Second)
+		if retryInSeconds < 1 {
+			retryInSeconds = 1
+		}
+	}
+	return RegistrationStatus{DeviceID: registry.settings.DeviceID, DeviceName: registry.name, LocalAddress: registry.localAddress, Coordinator: registry.settings.Coordinator, CoordinatorAddress: coordinatorAddress, Configured: registry.settings.Coordinator || coordinatorAddress != "", Registered: registry.registered, State: string(registry.registrationState), RetryInSeconds: retryInSeconds, LastError: registry.lastError}
 }
 
 // Rabindra Neupane
@@ -323,7 +406,12 @@ func (registry *DeviceRegistry) registrationHandler(responseWriter http.Response
 	// Authenticate heartbeats with the secret already assigned to this device.
 	if heartbeat {
 		if _, heartbeatAuthenticationError := registry.authenticateRegisteredRequest(httpRequest, requestBody, registration.DeviceID); heartbeatAuthenticationError != nil {
-			http.Error(responseWriter, heartbeatAuthenticationError.Error(), http.StatusUnauthorized)
+			var classifiedError *coordinatorError
+			if errors.As(heartbeatAuthenticationError, &classifiedError) {
+				writeCoordinatorError(responseWriter, classifiedError)
+			} else {
+				writeCoordinatorError(responseWriter, &coordinatorError{Code: coordinatorErrorAuthentication, Message: heartbeatAuthenticationError.Error(), StatusCode: http.StatusUnauthorized})
+			}
 			return
 		}
 	} else {
@@ -360,7 +448,12 @@ func (registry *DeviceRegistry) registrationHandler(responseWriter http.Response
 	// Create or refresh the registered device in coordinator storage.
 	registeredDevice, deviceRegistrationError := registry.acceptRegistration(httpRequest.Context(), registration, deviceIP, heartbeat)
 	if deviceRegistrationError != nil {
-		http.Error(responseWriter, deviceRegistrationError.Error(), http.StatusServiceUnavailable)
+		var classifiedError *coordinatorError
+		if errors.As(deviceRegistrationError, &classifiedError) {
+			writeCoordinatorError(responseWriter, classifiedError)
+		} else {
+			writeCoordinatorError(responseWriter, &coordinatorError{Code: coordinatorErrorUnavailable, Message: deviceRegistrationError.Error(), StatusCode: http.StatusServiceUnavailable})
+		}
 		return
 	}
 	// Respond with the stable identity assigned to the device.
@@ -376,7 +469,7 @@ func (registry *DeviceRegistry) acceptRegistration(requestContext context.Contex
 	defer registry.mutex.Unlock()
 	// Reject registration work when this installation is not coordinator.
 	if !registry.settings.Coordinator {
-		return Device{}, fmt.Errorf("this device is not the coordinator")
+		return Device{}, &coordinatorError{Code: coordinatorErrorUnavailable, Message: "this device is not the coordinator", StatusCode: http.StatusServiceUnavailable}
 	}
 	// Look up an existing device by its private registration key or assigned ID.
 	var deviceID string
@@ -388,24 +481,28 @@ func (registry *DeviceRegistry) acceptRegistration(requestContext context.Contex
 	}
 	// Reject a heartbeat when its device is unknown or uses the wrong ID.
 	if heartbeat && (registrationLookupError == sql.ErrNoRows || (registrationLookupError == nil && deviceID != registration.DeviceID)) {
-		return Device{}, fmt.Errorf("device must register before sending heartbeats")
+		return Device{}, &coordinatorError{Code: coordinatorErrorDeviceRevoked, Message: "device registration was removed; pair again", StatusCode: http.StatusUnauthorized}
 	}
 	// Return unexpected database lookup errors.
 	if registrationLookupError != nil && registrationLookupError != sql.ErrNoRows {
 		return Device{}, registrationLookupError
 	}
 	// Create a stable device ID for a new registration key.
+	newRemoteRegistration := false
 	if registrationLookupError == sql.ErrNoRows {
 		// Require a live single-use code before accepting an unknown installation.
 		localCoordinator := registration.RegistrationKey == registry.settings.RegistrationKey
 		pairingActive := registry.activePairingUntil.After(time.Now())
 		if !localCoordinator {
 			if !registry.pairingAllowedLocked(deviceIP) {
-				return Device{}, fmt.Errorf("too many pairing attempts; try again later")
+				return Device{}, &coordinatorError{Code: coordinatorErrorPairingBlocked, Message: "too many pairing attempts; wait five minutes and try again", StatusCode: http.StatusTooManyRequests}
 			}
-			if !pairingActive || !pairingCodeMatches(registration.PairingCode, registry.activePairingCode) {
+			if !pairingActive {
+				return Device{}, &coordinatorError{Code: coordinatorErrorPairingRequired, Message: "coordinator pairing is closed or expired", StatusCode: http.StatusForbidden}
+			}
+			if !pairingCodeMatches(registration.PairingCode, registry.activePairingCode) {
 				registry.recordPairingFailureLocked(deviceIP)
-				return Device{}, fmt.Errorf("coordinator pairing is closed or the pairing code is invalid")
+				return Device{}, &coordinatorError{Code: coordinatorErrorPairingInvalid, Message: "pairing code is invalid", StatusCode: http.StatusForbidden}
 			}
 		}
 		var tokenGenerationError error
@@ -413,12 +510,7 @@ func (registry *DeviceRegistry) acceptRegistration(requestContext context.Contex
 		if tokenGenerationError != nil {
 			return Device{}, tokenGenerationError
 		}
-		// Close the pairing window after one remote device is approved.
-		if !localCoordinator {
-			registry.activePairingCode = ""
-			registry.activePairingUntil = time.Time{}
-			delete(registry.pairingAttempts, deviceIP)
-		}
+		newRemoteRegistration = !localCoordinator
 	}
 	// Record the current time for online and offline tracking.
 	lastSeenTime := time.Now().UnixNano()
@@ -435,8 +527,18 @@ func (registry *DeviceRegistry) acceptRegistration(requestContext context.Contex
 	if registrationSavingError != nil {
 		return Device{}, registrationSavingError
 	}
+	// Consume the one-time code only after the new registration is safely stored.
+	if newRemoteRegistration {
+		registry.activePairingCode = ""
+		registry.activePairingUntil = time.Time{}
+		delete(registry.pairingAttempts, deviceIP)
+	}
 	// Return the registered device with its current online state.
-	return Device{DeviceID: deviceID, DeviceName: registration.Name, DeviceIP: deviceIP, DevicePort: registration.Port, DeviceOnline: true, LastSeen: time.Unix(0, lastSeenTime).UTC().Format(time.RFC3339)}, nil
+	coordinatorID := registry.settings.DeviceID
+	if coordinatorID == "" && registration.RegistrationKey == registry.settings.RegistrationKey {
+		coordinatorID = deviceID
+	}
+	return Device{DeviceID: deviceID, CoordinatorID: coordinatorID, DeviceName: registration.Name, DeviceIP: deviceIP, DevicePort: registration.Port, DeviceOnline: true, LastSeen: time.Unix(0, lastSeenTime).UTC().Format(time.RFC3339)}, nil
 }
 
 // Rabindra Neupane

@@ -84,6 +84,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
                         <input id="pairing-code" maxlength="6" inputmode="numeric" placeholder="6-digit code" autocomplete="one-time-code">
                         <p class="connection-guidance">Ask the coordinator to allow a new device, then enter its code.</p>
                         <button id="find-coordinator-button">Find Coordinator</button>
+                        <div id="coordinator-search-results" aria-live="polite"></div>
                     </div>
                     <div id="coordinator-pairing-controls" hidden>
                         <p>This computer accepts new clients only while pairing is open.</p>
@@ -148,7 +149,7 @@ async function findCoordinator() {
     coordinatorSearchRunning = true;
     showingDiscovery = true;
     selectedDeviceAddress = null;
-    const container = document.getElementById('connected-devices');
+    const container = document.getElementById('coordinator-search-results');
     if (container) container.textContent = 'Searching for coordinators...';
     const button = document.querySelector<HTMLButtonElement>('#find-coordinator-button');
     if (button) button.disabled = true;
@@ -208,7 +209,9 @@ function formatLastSeen(lastSeen: string): string {
 // Rabindra Neupane
 // renderDevices lists online devices first and keeps offline records visible.
 function renderDevices(devices: ListedDevice[]) {
-    const container = document.getElementById('connected-devices');
+    // Keep coordinator search results separate from registered sync devices.
+    const containerID = showingDiscovery ? 'coordinator-search-results' : 'connected-devices';
+    const container = document.getElementById(containerID);
     if (!container) return;
     const previousAddress = selectedDeviceAddress;
     selectedDeviceAddress = null;
@@ -367,9 +370,19 @@ function renderRegistrationStatus(
         return;
     }
 
-    const registrationState = status.registered
-        ? 'Securely connected'
-        : status.lastError ? friendlyConnectionError(status.lastError) : 'Connecting';
+    // Translate the backend lifecycle state into one clear instruction.
+    const stateMessages: Record<string, string> = {
+        'not-configured': 'Not configured',
+        'pairing-required': 'Pairing required — enter a new code and click Connect',
+        'registering': 'Registering with the coordinator',
+        'registered': 'Securely connected',
+        'reconnecting': status.retryInSeconds > 0
+            ? `Coordinator unavailable — retrying in ${status.retryInSeconds} seconds`
+            : 'Coordinator unavailable — retrying',
+        'revoked': 'Registration removed — pair this device again'
+    };
+    const registrationState = stateMessages[status.state]
+        ?? (status.lastError ? friendlyConnectionError(status.lastError) : 'Connecting');
     const registrationDetails = [
         ['Role', status.coordinator ? 'Coordinator' : 'Client'],
         ['Device name', status.deviceName || 'Unknown device'],
@@ -387,7 +400,11 @@ function renderRegistrationStatus(
         connectionHelp.replaceChildren();
         if (!status.registered && status.lastError) {
             const retryMessage = document.createElement('p');
-            retryMessage.textContent = 'Registration retries automatically every five seconds.';
+            retryMessage.textContent = status.state === 'pairing-required' || status.state === 'revoked'
+                ? 'Automatic registration is paused until a new pairing code is submitted.'
+                : status.retryInSeconds > 0
+                    ? `Registration will retry automatically in about ${status.retryInSeconds} seconds.`
+                    : 'Registration will retry automatically.';
             const details = document.createElement('details');
             const summary = document.createElement('summary');
             summary.textContent = 'Technical details';
@@ -433,8 +450,8 @@ async function refreshRegistration() {
             // Keep the selected draft role visible until the user applies it.
             showPendingRole(displayedCoordinatorMode);
         }
-        if (!status.configured && !showingDiscovery) renderDevices([]);
-        if (status.configured && !showingDiscovery) {
+        if ((!status.configured || !status.registered) && !showingDiscovery) renderDevices([]);
+        if (status.configured && status.registered && !showingDiscovery) {
             const devices = await GetRegisteredDevices();
             if (!showingDiscovery) renderDevices(devices);
         }
@@ -512,14 +529,16 @@ function updateCoordinatorSecurityControls(coordinator: boolean) {
     // Show only the controls that belong to the selected role.
     const clientControls = document.getElementById('client-connection-controls');
     const coordinatorControls = document.getElementById('coordinator-pairing-controls');
+    const coordinatorStarted = coordinator && ownDeviceIsCoordinator && !registrationSettingsEdited;
     if (clientControls) clientControls.hidden = coordinator;
     // Pairing is available only after this device is running as coordinator.
-    if (coordinatorControls) coordinatorControls.hidden = !coordinator || !ownDeviceIsCoordinator || registrationSettingsEdited;
+    if (coordinatorControls) coordinatorControls.hidden = !coordinatorStarted;
     if (coordinatorMode) coordinatorMode.checked = coordinator;
     if (clientMode) clientMode.checked = !coordinator;
     if (coordinatorAddress) coordinatorAddress.disabled = coordinator;
     if (saveCoordinatorButton) {
         saveCoordinatorButton.textContent = coordinator ? 'Start Coordinator' : 'Connect';
+        saveCoordinatorButton.hidden = coordinatorStarted;
         // Put Start Coordinator before pairing, but keep Connect after client settings.
         if (coordinator && coordinatorControls) coordinatorControls.before(saveCoordinatorButton);
         if (!coordinator && clientControls) clientControls.after(saveCoordinatorButton);
@@ -592,6 +611,8 @@ saveCoordinatorButton?.addEventListener('click', async () => {
         await ConfigureCoordinator(coordinatorMode?.checked ?? false, coordinatorAddress?.value ?? '', pairingCodeInput?.value ?? '');
         registrationSettingsEdited = false;
         showingDiscovery = false;
+        const searchResults = document.getElementById('coordinator-search-results');
+        if (searchResults) searchResults.replaceChildren();
         await refreshRegistration();
     } catch (error) {
         const status = document.getElementById('registration-status');
@@ -618,6 +639,8 @@ startPairingButton?.addEventListener('click', async () => {
 // Registered Devices goes back from the discovery list to the normal device list
 document.getElementById('registered-devices-button')?.addEventListener('click', () => {
     showingDiscovery = false;
+    const searchResults = document.getElementById('coordinator-search-results');
+    if (searchResults) searchResults.replaceChildren();
     void refreshRegistration();
 });
 

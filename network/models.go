@@ -68,13 +68,14 @@ func (e *SyncConflictError) Error() string {
 // Rabindra Neupane
 // Device is the public coordinator record used by discovery and the frontend.
 type Device struct {
-	DeviceID     string `json:"id"`
-	DeviceName   string `json:"name"`
-	DeviceIP     string `json:"ip"`
-	DevicePort   int    `json:"port"`
-	DeviceOnline bool   `json:"online"`
-	LastSeen     string `json:"lastSeen"`
-	Coordinator  bool   `json:"coordinator"`
+	DeviceID      string `json:"id"`
+	CoordinatorID string `json:"coordinatorId,omitempty"`
+	DeviceName    string `json:"name"`
+	DeviceIP      string `json:"ip"`
+	DevicePort    int    `json:"port"`
+	DeviceOnline  bool   `json:"online"`
+	LastSeen      string `json:"lastSeen"`
+	Coordinator   bool   `json:"coordinator"`
 }
 
 // Rabindra Neupane
