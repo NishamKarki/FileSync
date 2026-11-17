@@ -77,9 +77,11 @@ func formatMilliseconds(duration time.Duration) string {
 
 // Saves one sync to sync_metrics.csv. A logging problem never stops the sync itself.
 func (app *App) logSyncMetrics(metrics SyncMetrics) {
-	bytesSavedPercent := 0.0
-	if metrics.FileSizeBytes > 0 {
-		bytesSavedPercent = 100 * (1 - float64(metrics.ChunkBytesSent)/float64(metrics.FileSizeBytes))
+	// Leave savings empty for failed syncs, since nothing real was transferred.
+	bytesSavedPercent := ""
+	if metrics.Outcome != "failed" && metrics.FileSizeBytes > 0 {
+		savedRatio := 1 - float64(metrics.ChunkBytesSent)/float64(metrics.FileSizeBytes)
+		bytesSavedPercent = strconv.FormatFloat(100*savedRatio, 'f', 2, 64)
 	}
 	row := []string{
 		time.Now().Format(time.RFC3339),
@@ -90,7 +92,7 @@ func (app *App) logSyncMetrics(metrics SyncMetrics) {
 		strconv.Itoa(metrics.TotalChunks),
 		strconv.Itoa(metrics.ChunksSent),
 		strconv.FormatInt(metrics.ChunkBytesSent, 10),
-		strconv.FormatFloat(bytesSavedPercent, 'f', 2, 64),
+		bytesSavedPercent,
 		formatMilliseconds(metrics.PrepareTime),
 		formatMilliseconds(metrics.TransferTime),
 		formatMilliseconds(metrics.PrepareTime + metrics.TransferTime),

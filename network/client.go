@@ -95,6 +95,16 @@ func CompleteChunkTransfer(requestContext context.Context, deviceAddress, transf
 	return nil
 }
 
+// Santosh Tripathee
+// One shared client for every transfer request, so connections get reused.
+// A new client per chunk opened a new connection each time, and a 10 MB sync
+// ran Windows out of free ports at chunk 5272.
+var transferHTTPClient = &http.Client{
+	Transport:     &http.Transport{Proxy: nil, MaxIdleConnsPerHost: 8},
+	Timeout:       30 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
 // Rabindra Neupane
 // transferRequest sends one bounded transfer request and validates one optional
 // JSON response. Redirects are disabled so data cannot be sent to another host.
@@ -115,13 +125,8 @@ func transferRequest(requestContext context.Context, deviceAddress, requestPath,
 	}
 	// Set the body type and create a direct HTTP client with redirects disabled.
 	httpRequest.Header.Set("Content-Type", contentType)
-	httpClient := &http.Client{
-		Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	defer httpClient.CloseIdleConnections()
-	// Send the transfer request to the receiver.
-	httpResponse, transferRequestSendingError := httpClient.Do(httpRequest)
+	// Send the transfer request to the receiver over the shared client.
+	httpResponse, transferRequestSendingError := transferHTTPClient.Do(httpRequest)
 	if transferRequestSendingError != nil {
 		return fmt.Errorf("transfer request: %w", transferRequestSendingError)
 	}
