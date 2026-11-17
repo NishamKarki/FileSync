@@ -108,13 +108,16 @@ func (app *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot s
 	}
 	destination := filepath.Join(app.syncFolderPath, metadata.FileName)
 	// Conflict decision: Santosh Tripathee. Hash actual bytes, not lagging metadata.
+	finishConflictCheckTimer := app.startConflictCheckTimer(metadata.FileName, metadata.FileSize)
 	previousHash, destinationHashingError := HashFileOnDisk(destination)
 	if destinationHashingError != nil {
 		return destinationHashingError
 	}
 	hadPrevious := previousHash != ""
 	// Choose whether to keep local data, preserve a conflict, or accept remote data.
-	switch DetectConflict(metadata.BaseHash, previousHash, metadata.FileHash) {
+	conflictDecision := DetectConflict(metadata.BaseHash, previousHash, metadata.FileHash)
+	finishConflictCheckTimer(conflictDecision)
+	switch conflictDecision {
 	case KeepLocal:
 		return &network.KeepLocalError{}
 	case Conflict:

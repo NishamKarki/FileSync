@@ -58,7 +58,7 @@ func (app *App) SyncFile(address, fileName string) (*SyncResult, error) {
 // Rabindra Neupane
 // sendPreparedFile prepares one stable snapshot and runs incremental or benchmark transfer.
 // Both modes use Santosh's conflict metadata and verified acknowledgements.
-func (app *App) sendPreparedFile(address, fileName string, whole bool) (*SyncResult, error) {
+func (app *App) sendPreparedFile(address, fileName string, whole bool) (syncResult *SyncResult, syncError error) {
 	// Lock transfer work so two outgoing syncs cannot mix progress and state.
 	if !app.transferMutex.TryLock() {
 		return nil, fmt.Errorf("another file transfer is already running")
@@ -67,6 +67,11 @@ func (app *App) sendPreparedFile(address, fileName string, whole bool) (*SyncRes
 	if fileName == "" || fileName == "." || fileName == ".." || strings.ContainsAny(fileName, "/\\:\x00") {
 		return nil, fmt.Errorf("select a valid file name")
 	}
+
+	// Santosh Tripathee: start measuring this sync (see performanceLog.go)
+	cpuTimeAtStart := processCPUTime()
+	prepareStart := time.Now()
+
 	// Release the processing lock before network I/O to allow reverse transfers.
 	app.fileProcessingMutex.Lock()
 	chunks, metadata, filePreparationError := app.prepareFileForSync(fileName)
@@ -77,6 +82,16 @@ func (app *App) sendPreparedFile(address, fileName string, whole bool) (*SyncRes
 	if metadata.DeviceID == "" {
 		return nil, fmt.Errorf("register this device with a coordinator before sending files")
 	}
+
+	// Santosh Tripathee: preparation is done, now time the transfer.
+	// The deferred call runs when the sync finishes (synced, conflict, keep-local or failed).
+	prepareTime := time.Since(prepareStart)
+	transferStart := time.Now()
+	defer func() {
+		app.recordSyncPerformance(fileName, whole, metadata.FileSize, metadata.ChunkSize, len(chunks),
+			prepareTime, transferStart, cpuTimeAtStart, syncResult, syncError)
+	}()
+
 	requestContext := app.ctx
 	if requestContext == nil {
 		requestContext = context.Background()

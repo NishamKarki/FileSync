@@ -157,3 +157,24 @@ func (app *App) recordSyncPerformance(fileName string, wholeFile bool, fileSizeB
 		Outcome:           syncOutcome,
 	})
 }
+
+var conflictMetricsHeader = []string{"time", "file", "file_size_bytes", "decision", "detection_ms"}
+
+// Starts timing one conflict check on the receiving device.
+// Call the returned function with the decision when the check is done.
+func (app *App) startConflictCheckTimer(fileName string, fileSizeBytes int64) func(ConflictDecision) {
+	checkStart := time.Now()
+	return func(decision ConflictDecision) {
+		row := []string{
+			time.Now().Format(time.RFC3339),
+			fileName,
+			strconv.FormatInt(fileSizeBytes, 10),
+			string(decision),
+			formatMilliseconds(time.Since(checkStart)),
+		}
+		logFilePath := filepath.Join(app.performanceLogFolder(), "conflict_metrics.csv")
+		if logWritingError := appendCSVRow(logFilePath, conflictMetricsHeader, row); logWritingError != nil {
+			fmt.Println("Could not write conflict performance log:", logWritingError)
+		}
+	}
+}

@@ -12,3 +12,5 @@
 # Rabindra Neupane - installation identity and coordinator settings stay local.
 /.filesync-device.json
 /.filesync-device-*.tmp
+
+Performance Logs/
