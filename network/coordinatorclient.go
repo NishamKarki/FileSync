@@ -17,6 +17,20 @@ import (
 	"time"
 )
 
+// Reuse coordinator connections for registration, heartbeats, and device queries.
+var coordinatorHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy:               nil,
+		MaxIdleConns:        32,
+		MaxIdleConnsPerHost: 8,
+		IdleConnTimeout:     90 * time.Second,
+	},
+	Timeout: 5 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
 // Rabindra Neupane
 // run keeps this device registered while FileSync is running.
 func (registry *DeviceRegistry) run() {
@@ -185,7 +199,7 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 		return
 	}
 
-	// Update the public registration state after this heartbeat attempt.
+	// Mark this connection unavailable while preserving its saved identity for retries.
 	registry.registered = false
 	// Stop authentication failures until the user supplies a new pairing code.
 	errorCode := coordinatorErrorCode(registrationError)
@@ -216,7 +230,7 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 		registry.registrationState = RegistrationPairingNeeded
 		registry.nextAttempt = time.Time{}
 	default:
-		// Retry temporary failures with a bounded exponential delay.
+		// Retry temporary failures while the persistent identity remains saved.
 		if deviceSettings.DeviceID != "" {
 			registry.registrationState = RegistrationReconnecting
 		} else {
@@ -305,18 +319,8 @@ func (registry *DeviceRegistry) registryRequest(
 		return requestSigningError
 	}
 
-	// Create a direct client with redirects disabled.
-	httpClient := &http.Client{
-		Transport: &http.Transport{Proxy: nil},
-		Timeout:   5 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	defer httpClient.CloseIdleConnections()
-
-	// Send the request to the selected coordinator.
-	httpResponse, coordinatorRequestError := httpClient.Do(httpRequest)
+	// Send the request through the shared coordinator connection pool.
+	httpResponse, coordinatorRequestError := coordinatorHTTPClient.Do(httpRequest)
 	if coordinatorRequestError != nil {
 		return fmt.Errorf("coordinator unavailable: %w", coordinatorRequestError)
 	}

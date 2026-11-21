@@ -164,6 +164,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
                 <h2>Recent Activity</h2>
 
                 <p id="recent-activity">No Files Modified</p>
+                <details id="transfer-error-details" hidden>
+                    <summary>Technical details</summary>
+                    <pre id="transfer-error-text"></pre>
+                </details>
             </div>
 
         </section>
@@ -534,6 +538,19 @@ function friendlyConnectionError(error: unknown): string {
         return 'Coordinator unavailable. Check its address, firewall permission, and network connection.';
     }
     return String(error ?? 'Connection failed.');
+}
+
+// Rabindra Neupane
+// friendlyTransferError identifies the selected destination instead of the coordinator.
+function friendlyTransferError(error: unknown): string {
+    const message = String(error ?? '').toLowerCase();
+    if (message.includes('deadline exceeded') || message.includes('timed out')) {
+        return 'Destination device did not respond. Confirm FileSync is open and both computers are on the same network.';
+    }
+    if (message.includes('connection refused')) {
+        return 'The destination was found, but FileSync is not accepting connections on port 8080.';
+    }
+    return String(error ?? 'Transfer failed.');
 }
 
 // Rabindra Neupane
@@ -936,6 +953,8 @@ const selectedFileNames = new Set<string>();
 let selectionSource = 'Synced Files';
 // The Recent Activity text
 const recentFileActivity = document.getElementById('recent-activity')
+const transferErrorDetails = document.querySelector<HTMLDetailsElement>('#transfer-error-details');
+const transferErrorText = document.querySelector<HTMLElement>('#transfer-error-text');
 
 // Rabindra Neupane
 let transferInProgress = false;
@@ -985,6 +1004,9 @@ async function transferSelectedFiles(wholeFile: boolean) {
     const button = wholeFile ? wholeFileButton : syncNowButton;
     const label = button?.textContent ?? '';
     const outcomes: string[] = [];
+    const technicalErrors: string[] = [];
+    if (transferErrorDetails) transferErrorDetails.hidden = true;
+    if (transferErrorText) transferErrorText.textContent = '';
     setTransferBusy(true);
     if (button) button.textContent = wholeFile ? 'Sending files...' : 'Syncing...';
     try {
@@ -1005,7 +1027,8 @@ async function transferSelectedFiles(wholeFile: boolean) {
                     outcomes.push(`${name}: ${details}${result.baseUpdated ? '' : ' Local file changed during transfer; latest edits are not confirmed synced.'}`);
                 }
             } catch (error) {
-                outcomes.push(`Failed to ${wholeFile ? 'send' : 'sync'} ${name}: ${friendlyConnectionError(error)}`);
+                outcomes.push(`Failed to ${wholeFile ? 'send' : 'sync'} ${name}: ${friendlyTransferError(error)}`);
+                technicalErrors.push(`${name}: ${String(error ?? 'Unknown transfer error')}`);
             }
         }
     } finally {
@@ -1013,6 +1036,10 @@ async function transferSelectedFiles(wholeFile: boolean) {
         setTransferBusy(false);
         if (button) button.textContent = label;
         if (recentFileActivity) recentFileActivity.textContent = outcomes.join('\n');
+        if (technicalErrors.length > 0 && transferErrorDetails && transferErrorText) {
+            transferErrorText.textContent = technicalErrors.join('\n');
+            transferErrorDetails.hidden = false;
+        }
     }
 }
 syncNowButton?.addEventListener('click', () => { void transferSelectedFiles(false); });

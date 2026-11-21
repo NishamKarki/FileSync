@@ -607,7 +607,7 @@ func (registry *DeviceRegistry) readRegistry(requestContext context.Context) ([]
 	// Create the result list and calculate the online cutoff.
 	registeredDevices := make([]Device, 0)
 	// Calculate the cutoff used to mark devices offline after missed heartbeats.
-	offlineCutoff := time.Now().Add(-15 * time.Second).UnixNano()
+	offlineCutoff := time.Now().Add(-30 * time.Second).UnixNano()
 	// Read and classify every saved device record.
 	for deviceRows.Next() {
 		// Scan one database row into a public device record.

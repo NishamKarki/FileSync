@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -74,8 +76,32 @@ func StartChunkTransfer(requestContext context.Context, deviceAddress string, me
 func SendTransferChunk(requestContext context.Context, deviceAddress, transferID string, chunkIndex int, chunkData []byte) error {
 	// Create query values that identify the transfer and chunk position.
 	queryParameters := url.Values{"transferId": {transferID}, "chunkIndex": {fmt.Sprint(chunkIndex)}}
-	// Send the raw chunk bytes to the receiver's isolated staging folder.
-	return transferRequest(requestContext, deviceAddress, "/transfer/chunk?"+queryParameters.Encode(), "application/octet-stream", chunkData, nil)
+	requestPath := "/transfer/chunk?" + queryParameters.Encode()
+	// Retry only transient network failures; the same transfer ID and index make this safe.
+	var lastChunkSendingError error
+	for attempt := 0; attempt < 3; attempt++ {
+		lastChunkSendingError = transferRequest(requestContext, deviceAddress, requestPath, "application/octet-stream", chunkData, nil)
+		if lastChunkSendingError == nil {
+			return nil
+		}
+		var networkError net.Error
+		if !errors.As(lastChunkSendingError, &networkError) {
+			return lastChunkSendingError
+		}
+		if attempt == 2 {
+			break
+		}
+		// Stop immediately when the caller cancels the complete transfer.
+		retryDelay := time.Duration(attempt+1) * 250 * time.Millisecond
+		retryTimer := time.NewTimer(retryDelay)
+		select {
+		case <-requestContext.Done():
+			retryTimer.Stop()
+			return requestContext.Err()
+		case <-retryTimer.C:
+		}
+	}
+	return fmt.Errorf("chunk request failed after 3 attempts: %w", lastChunkSendingError)
 }
 
 // Rabindra Neupane
