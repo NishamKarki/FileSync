@@ -32,16 +32,18 @@ type DeviceSettings struct {
 // Rabindra Neupane
 // RegistrationStatus exposes public registry state without the private key.
 type RegistrationStatus struct {
-	DeviceID           string `json:"deviceId"`
-	DeviceName         string `json:"deviceName"`
-	LocalAddress       string `json:"localAddress"`
-	Coordinator        bool   `json:"coordinator"`
-	CoordinatorAddress string `json:"coordinatorAddress"`
-	Configured         bool   `json:"configured"`
-	Registered         bool   `json:"registered"`
-	State              string `json:"state"`
-	RetryInSeconds     int    `json:"retryInSeconds"`
-	LastError          string `json:"lastError"`
+	DeviceID                 string `json:"deviceId"`
+	DeviceName               string `json:"deviceName"`
+	LocalAddress             string `json:"localAddress"`
+	Coordinator              bool   `json:"coordinator"`
+	CoordinatorAddress       string `json:"coordinatorAddress"`
+	Configured               bool   `json:"configured"`
+	Registered               bool   `json:"registered"`
+	State                    string `json:"state"`
+	RetryInSeconds           int    `json:"retryInSeconds"`
+	PairingAttemptsRemaining int    `json:"pairingAttemptsRemaining"`
+	PairingBlockedUntil      string `json:"pairingBlockedUntil,omitempty"`
+	LastError                string `json:"lastError"`
 }
 
 // Rabindra Neupane
@@ -70,9 +72,11 @@ const (
 // Rabindra Neupane
 // coordinatorError gives clients a stable recovery code instead of fragile error text.
 type coordinatorError struct {
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-	StatusCode int    `json:"-"`
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	AttemptsRemaining int    `json:"attemptsRemaining,omitempty"`
+	RetryAt           string `json:"retryAt,omitempty"`
+	StatusCode        int    `json:"-"`
 }
 
 // Rabindra Neupane
@@ -104,31 +108,33 @@ type registrationRequest struct {
 // DeviceRegistry owns persistent identity, coordinator settings, heartbeat
 // state, registered-device queries, and the optional chunk-location service.
 type DeviceRegistry struct {
-	chunkLocations     ChunkLocationStore
-	mutex              sync.Mutex
-	database           *sql.DB
-	settings           DeviceSettings
-	settingsPath       string
-	name               string
-	port               int
-	localAddress       string
-	registered         bool
-	registrationState  RegistrationState
-	lastError          string
-	retryDelay         time.Duration
-	nextAttempt        time.Time
-	generation         uint64
-	started            int64
-	serviceContext     context.Context
-	cancelService      context.CancelFunc
-	wakeSignal         chan struct{}
-	doneSignal         chan struct{}
-	pendingPairingCode string
-	pairingRetryPaused bool
-	activePairingCode  string
-	activePairingUntil time.Time
-	usedNonces         map[string]time.Time
-	pairingAttempts    map[string]pairingAttempt
+	chunkLocations           ChunkLocationStore
+	mutex                    sync.Mutex
+	database                 *sql.DB
+	settings                 DeviceSettings
+	settingsPath             string
+	name                     string
+	port                     int
+	localAddress             string
+	registered               bool
+	registrationState        RegistrationState
+	lastError                string
+	retryDelay               time.Duration
+	nextAttempt              time.Time
+	generation               uint64
+	started                  int64
+	serviceContext           context.Context
+	cancelService            context.CancelFunc
+	wakeSignal               chan struct{}
+	doneSignal               chan struct{}
+	pendingPairingCode       string
+	pairingRetryPaused       bool
+	pairingAttemptsRemaining int
+	pairingBlockedUntil      time.Time
+	activePairingCode        string
+	activePairingUntil       time.Time
+	usedNonces               map[string]time.Time
+	pairingAttempts          map[string]pairingAttempt
 }
 
 // Rabindra Neupane
@@ -195,7 +201,13 @@ func OpenDeviceRegistry(applicationContext context.Context, database *sql.DB, pr
 	if !deviceSettings.Coordinator && deviceSettings.CoordinatorAddress != "" && deviceSettings.DeviceID == "" {
 		initialState = RegistrationPairingNeeded
 	}
-	registry := &DeviceRegistry{database: database, settings: deviceSettings, settingsPath: settingsPath, name: deviceName, port: serverPort, started: time.Now().UnixNano(), serviceContext: serviceContext, cancelService: cancelService, wakeSignal: make(chan struct{}, 1), doneSignal: make(chan struct{}), usedNonces: make(map[string]time.Time), pairingAttempts: make(map[string]pairingAttempt), registrationState: initialState, retryDelay: 5 * time.Second, pairingRetryPaused: initialState == RegistrationPairingNeeded}
+	// Open persistent chunk-location storage before accepting registry requests.
+	chunkLocationStore, chunkLocationStoreOpeningError := newSQLiteChunkLocationStore(database)
+	if chunkLocationStoreOpeningError != nil {
+		cancelService()
+		return nil, chunkLocationStoreOpeningError
+	}
+	registry := &DeviceRegistry{chunkLocations: chunkLocationStore, database: database, settings: deviceSettings, settingsPath: settingsPath, name: deviceName, port: serverPort, started: time.Now().UnixNano(), serviceContext: serviceContext, cancelService: cancelService, wakeSignal: make(chan struct{}, 1), doneSignal: make(chan struct{}), usedNonces: make(map[string]time.Time), pairingAttempts: make(map[string]pairingAttempt), registrationState: initialState, retryDelay: 5 * time.Second, pairingRetryPaused: initialState == RegistrationPairingNeeded, pairingAttemptsRemaining: 5}
 	// Save the complete settings so a new key survives future restarts.
 	if settingsSavingError := registry.saveSettingsLocked(deviceSettings); settingsSavingError != nil {
 		cancelService()
@@ -306,6 +318,8 @@ func (registry *DeviceRegistry) Configure(isCoordinator bool, coordinatorAddress
 	registry.settings = updatedSettings
 	registry.pendingPairingCode = pairingCode
 	registry.pairingRetryPaused = false
+	registry.pairingAttemptsRemaining = 5
+	registry.pairingBlockedUntil = time.Time{}
 	registry.generation++
 	registry.registered = false
 	registry.registrationState = RegistrationRegistering
@@ -346,7 +360,11 @@ func (registry *DeviceRegistry) Status() RegistrationStatus {
 			retryInSeconds = 1
 		}
 	}
-	return RegistrationStatus{DeviceID: registry.settings.DeviceID, DeviceName: registry.name, LocalAddress: registry.localAddress, Coordinator: registry.settings.Coordinator, CoordinatorAddress: coordinatorAddress, Configured: registry.settings.Coordinator || coordinatorAddress != "", Registered: registry.registered, State: string(registry.registrationState), RetryInSeconds: retryInSeconds, LastError: registry.lastError}
+	pairingBlockedUntil := ""
+	if registry.pairingBlockedUntil.After(time.Now()) {
+		pairingBlockedUntil = registry.pairingBlockedUntil.UTC().Format(time.RFC3339)
+	}
+	return RegistrationStatus{DeviceID: registry.settings.DeviceID, DeviceName: registry.name, LocalAddress: registry.localAddress, Coordinator: registry.settings.Coordinator, CoordinatorAddress: coordinatorAddress, Configured: registry.settings.Coordinator || coordinatorAddress != "", Registered: registry.registered, State: string(registry.registrationState), RetryInSeconds: retryInSeconds, PairingAttemptsRemaining: registry.pairingAttemptsRemaining, PairingBlockedUntil: pairingBlockedUntil, LastError: registry.lastError}
 }
 
 // Rabindra Neupane
@@ -494,15 +512,18 @@ func (registry *DeviceRegistry) acceptRegistration(requestContext context.Contex
 		localCoordinator := registration.RegistrationKey == registry.settings.RegistrationKey
 		pairingActive := registry.activePairingUntil.After(time.Now())
 		if !localCoordinator {
-			if !registry.pairingAllowedLocked(deviceIP) {
-				return Device{}, &coordinatorError{Code: coordinatorErrorPairingBlocked, Message: "too many pairing attempts; wait five minutes and try again", StatusCode: http.StatusTooManyRequests}
+			if pairingBlockUntil := registry.pairingBlockUntilLocked(deviceIP); pairingBlockUntil.After(time.Now()) {
+				return Device{}, &coordinatorError{Code: coordinatorErrorPairingBlocked, Message: "too many incorrect pairing attempts", AttemptsRemaining: 0, RetryAt: pairingBlockUntil.UTC().Format(time.RFC3339), StatusCode: http.StatusTooManyRequests}
 			}
 			if !pairingActive {
 				return Device{}, &coordinatorError{Code: coordinatorErrorPairingRequired, Message: "coordinator pairing is closed or expired", StatusCode: http.StatusForbidden}
 			}
 			if !pairingCodeMatches(registration.PairingCode, registry.activePairingCode) {
-				registry.recordPairingFailureLocked(deviceIP)
-				return Device{}, &coordinatorError{Code: coordinatorErrorPairingInvalid, Message: "pairing code is invalid", StatusCode: http.StatusForbidden}
+				attemptsRemaining, pairingBlockUntil := registry.recordPairingFailureLocked(deviceIP)
+				if pairingBlockUntil.After(time.Now()) {
+					return Device{}, &coordinatorError{Code: coordinatorErrorPairingBlocked, Message: "too many incorrect pairing attempts", AttemptsRemaining: 0, RetryAt: pairingBlockUntil.UTC().Format(time.RFC3339), StatusCode: http.StatusTooManyRequests}
+				}
+				return Device{}, &coordinatorError{Code: coordinatorErrorPairingInvalid, Message: "pairing code is incorrect", AttemptsRemaining: attemptsRemaining, StatusCode: http.StatusForbidden}
 			}
 		}
 		var tokenGenerationError error

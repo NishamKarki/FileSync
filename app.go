@@ -450,27 +450,6 @@ func (app *App) completeIncomingTransfer(metadata network.FileMetadata, chunkRoo
 }
 
 // Rabindra Neupane
-// PingDevice checks whether a FileSync device can be reached at the address.
-func (app *App) PingDevice(address string) (network.PingResponse, error) {
-	// Send the ping request through the network client.
-	pingResponse, pingError := network.PingDevice(address)
-
-	// Check for any error during ping
-	if pingError != nil {
-		return network.PingResponse{}, pingError
-	}
-
-	return *pingResponse, nil
-}
-
-// Rabindra Neupane
-// GetLocalIP retrieves the local IP address of the current device
-func (app *App) GetLocalIP() (string, error) {
-	// Read the active local address from the network package.
-	return network.GetLocalIP()
-}
-
-// Rabindra Neupane
 // DiscoverDevices scans the local subnet for FileSync devices.
 func (app *App) DiscoverDevices() []network.Device {
 	// Scan the local subnet through the network package.

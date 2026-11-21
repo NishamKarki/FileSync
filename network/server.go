@@ -72,6 +72,8 @@ func StartServer(serverContext context.Context, serverPort string, completeTrans
 		fmt.Println("Cannot locate transfer storage:", projectDirectoryReadingError)
 		return
 	}
+	// Serve only accepted verified chunks for peer reconstruction requests.
+	serverRoutes.HandleFunc("/chunks/data", chunkDataHandler(projectDirectory))
 	// Register benchmark whole-file transfer and normal incremental transfer routes.
 	serverRoutes.Handle("/file", NewWholeFileSendHandler(projectDirectory, completeTransfer))
 	serverRoutes.Handle("/transfer/", NewTransferHandler(projectDirectory, completeTransfer))

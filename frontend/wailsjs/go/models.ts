@@ -174,26 +174,6 @@ export namespace network {
 	        this.expiresAt = source["expiresAt"];
 	    }
 	}
-	export class PingResponse {
-	    success: boolean;
-	    message: string;
-	    deviceName: string;
-	    deviceId: string;
-	    coordinator: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new PingResponse(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.success = source["success"];
-	        this.message = source["message"];
-	        this.deviceName = source["deviceName"];
-	        this.deviceId = source["deviceId"];
-	        this.coordinator = source["coordinator"];
-	    }
-	}
 	export class RegistrationStatus {
 	    deviceId: string;
 	    deviceName: string;
@@ -204,6 +184,8 @@ export namespace network {
 	    registered: boolean;
 	    state: string;
 	    retryInSeconds: number;
+	    pairingAttemptsRemaining: number;
+	    pairingBlockedUntil?: string;
 	    lastError: string;
 	
 	    static createFrom(source: any = {}) {
@@ -221,6 +203,8 @@ export namespace network {
 	        this.registered = source["registered"];
 	        this.state = source["state"];
 	        this.retryInSeconds = source["retryInSeconds"];
+	        this.pairingAttemptsRemaining = source["pairingAttemptsRemaining"];
+	        this.pairingBlockedUntil = source["pairingBlockedUntil"];
 	        this.lastError = source["lastError"];
 	    }
 	}

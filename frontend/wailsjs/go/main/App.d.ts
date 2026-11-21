@@ -18,8 +18,6 @@ export function GetConflicts():Promise<Array<main.ConflictRecord>>;
 
 export function GetCoordinatorPairingStatus():Promise<network.PairingStatus>;
 
-export function GetLocalIP():Promise<string>;
-
 export function GetRegisteredDevices():Promise<Array<network.Device>>;
 
 export function GetRegistrationStatus():Promise<network.RegistrationStatus>;
@@ -27,8 +25,6 @@ export function GetRegistrationStatus():Promise<network.RegistrationStatus>;
 export function HandleFileEvent(arg1:fsnotify.Event):Promise<void>;
 
 export function ListSyncedFiles():Promise<Array<main.SyncedFile>>;
-
-export function PingDevice(arg1:string):Promise<network.PingResponse>;
 
 export function ReconstructFile(arg1:string):Promise<void>;
 

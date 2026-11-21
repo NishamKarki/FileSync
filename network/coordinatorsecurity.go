@@ -17,13 +17,15 @@ import (
 )
 
 const (
-	deviceIDHeader  = "X-FileSync-Device-ID"
-	timestampHeader = "X-FileSync-Timestamp"
-	nonceHeader     = "X-FileSync-Nonce"
-	signatureHeader = "X-FileSync-Signature"
-	requestTimeSkew = 30 * time.Second
-	nonceLifetime   = 2 * time.Minute
-	pairingLifetime = 2 * time.Minute
+	deviceIDHeader       = "X-FileSync-Device-ID"
+	timestampHeader      = "X-FileSync-Timestamp"
+	nonceHeader          = "X-FileSync-Nonce"
+	signatureHeader      = "X-FileSync-Signature"
+	requestTimeSkew      = 30 * time.Second
+	nonceLifetime        = 2 * time.Minute
+	pairingLifetime      = 2 * time.Minute
+	pairingFailureWindow = 5 * time.Minute
+	pairingBlockDuration = 5 * time.Minute
 )
 
 // Rabindra Neupane
@@ -196,38 +198,43 @@ func pairingCodeMatches(submittedCode string, activeCode string) bool {
 }
 
 // Rabindra Neupane
-// pairingAllowedLocked rejects an address that exceeded the pairing attempt limit.
-func (registry *DeviceRegistry) pairingAllowedLocked(deviceIP string) bool {
+// pairingBlockUntilLocked returns an active block and clears an expired attempt record.
+func (registry *DeviceRegistry) pairingBlockUntilLocked(deviceIP string) time.Time {
 	// Remove an expired attempt record before checking the current address.
 	attempt, exists := registry.pairingAttempts[deviceIP]
 	if !exists {
-		return true
+		return time.Time{}
 	}
 	now := time.Now()
 	if attempt.BlockedUntil.After(now) {
-		return false
+		return attempt.BlockedUntil
 	}
-	if now.Sub(attempt.WindowStart) > pairingLifetime {
+	if now.Sub(attempt.WindowStart) > pairingFailureWindow {
 		delete(registry.pairingAttempts, deviceIP)
 	}
-	return true
+	return time.Time{}
 }
 
 // Rabindra Neupane
-// recordPairingFailureLocked counts bad codes and temporarily blocks repeated guesses.
-func (registry *DeviceRegistry) recordPairingFailureLocked(deviceIP string) {
+// recordPairingFailureLocked counts bad codes and returns the remaining attempts and block time.
+func (registry *DeviceRegistry) recordPairingFailureLocked(deviceIP string) (int, time.Time) {
 	// Start a new failure window when no recent attempts exist.
 	now := time.Now()
 	attempt := registry.pairingAttempts[deviceIP]
-	if attempt.WindowStart.IsZero() || now.Sub(attempt.WindowStart) > pairingLifetime {
+	if attempt.WindowStart.IsZero() || now.Sub(attempt.WindowStart) > pairingFailureWindow {
 		attempt = pairingAttempt{WindowStart: now}
 	}
 	attempt.Failures++
 	// Block this address after five incorrect codes.
 	if attempt.Failures >= 5 {
-		attempt.BlockedUntil = now.Add(5 * time.Minute)
+		attempt.BlockedUntil = now.Add(pairingBlockDuration)
 	}
 	registry.pairingAttempts[deviceIP] = attempt
+	attemptsRemaining := 5 - attempt.Failures
+	if attemptsRemaining < 0 {
+		attemptsRemaining = 0
+	}
+	return attemptsRemaining, attempt.BlockedUntil
 }
 
 // Rabindra Neupane
@@ -275,8 +282,16 @@ func (registry *DeviceRegistry) RevokeDevice(deviceID string) error {
 	if deviceID == "" || deviceID == registry.settings.DeviceID {
 		return fmt.Errorf("select a client device to remove")
 	}
-	// Delete the credential so future signed requests are rejected immediately.
-	deletionResult, deviceDeletionError := registry.database.Exec("DELETE FROM device_registry WHERE device_id=?", deviceID)
+	// Delete registration and chunk locations together so no stale source remains.
+	databaseTransaction, transactionStartError := registry.database.Begin()
+	if transactionStartError != nil {
+		return transactionStartError
+	}
+	defer databaseTransaction.Rollback()
+	if _, chunkLocationDeletionError := databaseTransaction.Exec("DELETE FROM chunk_locations WHERE device_id=?", deviceID); chunkLocationDeletionError != nil {
+		return chunkLocationDeletionError
+	}
+	deletionResult, deviceDeletionError := databaseTransaction.Exec("DELETE FROM device_registry WHERE device_id=?", deviceID)
 	if deviceDeletionError != nil {
 		return deviceDeletionError
 	}
@@ -287,5 +302,5 @@ func (registry *DeviceRegistry) RevokeDevice(deviceID string) error {
 	if deletedRows == 0 {
 		return fmt.Errorf("registered device was not found")
 	}
-	return nil
+	return databaseTransaction.Commit()
 }

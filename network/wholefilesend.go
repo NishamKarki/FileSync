@@ -195,11 +195,3 @@ func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error
 		writeTransferJSON(responseWriter, TransferCompletion{Completed: true, FileHash: metadata.FileHash})
 	})
 }
-
-// Rabindra Neupane
-// NewWholeFileHandler keeps older callers working.
-// Whole-file transfer is used only for benchmark comparison.
-func NewWholeFileHandler(root string, apply func(FileMetadata, string) error) http.Handler {
-	// Forward older callers to the current benchmark handler.
-	return NewWholeFileSendHandler(root, apply)
-}

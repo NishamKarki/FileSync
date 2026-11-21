@@ -178,6 +178,8 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 		registry.registered = true
 		registry.registrationState = RegistrationRegistered
 		registry.lastError = ""
+		registry.pairingAttemptsRemaining = 5
+		registry.pairingBlockedUntil = time.Time{}
 		registry.retryDelay = 5 * time.Second
 		registry.nextAttempt = time.Now().Add(5 * time.Second)
 		return
@@ -185,38 +187,46 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 
 	// Update the public registration state after this heartbeat attempt.
 	registry.registered = false
-	// Save and log the latest registration error for the frontend.
-	if registrationError != nil {
-		// Stop authentication failures until the user supplies a new pairing code.
-		errorCode := coordinatorErrorCode(registrationError)
-		switch errorCode {
-		case coordinatorErrorPairingRequired, coordinatorErrorPairingInvalid, coordinatorErrorPairingBlocked:
-			registry.pendingPairingCode = ""
-			registry.pairingRetryPaused = true
-			registry.registrationState = RegistrationPairingNeeded
-			registry.nextAttempt = time.Time{}
-		case coordinatorErrorDeviceRevoked:
-			registry.pendingPairingCode = ""
-			registry.pairingRetryPaused = true
-			registry.registrationState = RegistrationRevoked
-			registry.nextAttempt = time.Time{}
-		case coordinatorErrorIdentityChanged:
-			registry.pendingPairingCode = ""
-			registry.pairingRetryPaused = true
-			registry.registrationState = RegistrationPairingNeeded
-			registry.nextAttempt = time.Time{}
-		default:
-			// Retry temporary failures with a bounded exponential delay.
-			if deviceSettings.DeviceID != "" {
-				registry.registrationState = RegistrationReconnecting
-			} else {
-				registry.registrationState = RegistrationRegistering
+	// Stop authentication failures until the user supplies a new pairing code.
+	errorCode := coordinatorErrorCode(registrationError)
+	var classifiedError *coordinatorError
+	if errors.As(registrationError, &classifiedError) {
+		// Update attempt details only when the coordinator evaluated a submitted code.
+		if classifiedError.Code == coordinatorErrorPairingInvalid || classifiedError.Code == coordinatorErrorPairingBlocked {
+			registry.pairingAttemptsRemaining = classifiedError.AttemptsRemaining
+			if classifiedError.RetryAt != "" {
+				registry.pairingBlockedUntil, _ = time.Parse(time.RFC3339, classifiedError.RetryAt)
 			}
-			registry.scheduleRetryLocked()
 		}
-		registry.lastError = registrationError.Error()
-		fmt.Println("Device registration:", registrationError)
 	}
+	switch errorCode {
+	case coordinatorErrorPairingRequired, coordinatorErrorPairingInvalid, coordinatorErrorPairingBlocked:
+		registry.pendingPairingCode = ""
+		registry.pairingRetryPaused = true
+		registry.registrationState = RegistrationPairingNeeded
+		registry.nextAttempt = time.Time{}
+	case coordinatorErrorDeviceRevoked:
+		registry.pendingPairingCode = ""
+		registry.pairingRetryPaused = true
+		registry.registrationState = RegistrationRevoked
+		registry.nextAttempt = time.Time{}
+	case coordinatorErrorIdentityChanged:
+		registry.pendingPairingCode = ""
+		registry.pairingRetryPaused = true
+		registry.registrationState = RegistrationPairingNeeded
+		registry.nextAttempt = time.Time{}
+	default:
+		// Retry temporary failures with a bounded exponential delay.
+		if deviceSettings.DeviceID != "" {
+			registry.registrationState = RegistrationReconnecting
+		} else {
+			registry.registrationState = RegistrationRegistering
+		}
+		registry.scheduleRetryLocked()
+	}
+	// Save and log the latest registration error for the frontend.
+	registry.lastError = registrationError.Error()
+	fmt.Println("Device registration:", registrationError)
 }
 
 // Rabindra Neupane

@@ -27,6 +27,120 @@ body {
     font-size: 20px;
 }
 
+/* Main navigation separates file syncing from connection setup. */
+.dashboard-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 10px 26px 0;
+    border-bottom: 1px solid #444;
+}
+
+.dashboard-tab {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    border-bottom: 3px solid transparent;
+    background: #292929;
+}
+
+.dashboard-tab.active-tab {
+    border-bottom-color: #8bbcff;
+    background: #3a3a3a;
+}
+
+.tab-status-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #999;
+}
+
+.tab-status-dot.connected {
+    background: #55c878;
+}
+
+.tab-status-dot.attention {
+    background: #e6a64a;
+}
+
+.app-tab-panel[hidden] {
+    display: none;
+}
+
+.connection-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    margin: 16px 26px 0;
+    padding: 12px 14px;
+    border: 1px solid #d19a48;
+    background: #382d1b;
+}
+
+.connection-banner[hidden] {
+    display: none;
+}
+
+/* Destination card keeps the sync target prominent and easy to change. */
+.sync-destination-section {
+    display: grid;
+    grid-template-columns: minmax(190px, 0.7fr) minmax(280px, 1.3fr);
+    gap: 24px;
+    align-items: center;
+    margin: 18px 26px;
+    padding: 18px 20px;
+    border: 1px solid #555;
+    background: #202020;
+}
+
+.destination-heading h2,
+.destination-heading p,
+.destination-status {
+    margin: 0;
+}
+
+.destination-heading p {
+    margin-top: 5px;
+    color: #c5c5c5;
+    font-size: 0.88rem;
+}
+
+.destination-controls {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 7px 12px;
+    align-items: center;
+}
+
+.destination-controls label {
+    font-weight: 700;
+}
+
+#sync-destination-select {
+    width: 100%;
+    min-width: 0;
+    padding: 11px 38px 11px 12px;
+    border: 1px solid #aaa;
+    background: #f4f4f4;
+    color: #181818;
+    font: inherit;
+    cursor: pointer;
+}
+
+#sync-destination-select:focus-visible {
+    outline: 3px solid #8bbcff;
+    outline-offset: 2px;
+}
+
+.destination-status {
+    grid-column: 2;
+    min-height: 1.25em;
+    color: #c5c5c5;
+    font-size: 0.84rem;
+    overflow-wrap: anywhere;
+}
+
 /* File selection area: selected files on the left, Add files button on the right */
 .select-file-to-sync {
     border-bottom: 1px solid #444;
@@ -89,16 +203,16 @@ button:hover {
     font-size: 14px;
 }
 
-/* Connected Devices and Recent Activity side by side.
-   Recent Activity gets a bit more room. */
-.progress-activity {
-    grid-template-columns: 1fr 1.5fr;
-    display: grid;
+/* Connections uses the full width because Recent Activity lives on Sync Dashboard. */
+#connections-panel .devices {
+    max-width: 980px;
+    margin: 0 auto;
+    border-right: 0;
 }
 
-/* Line between the two panels */
-.devices {
-    border-right: 1px solid #444;
+#sync-dashboard-panel .activity {
+    border-top: 1px solid #444;
+    min-height: 150px;
 }
 
 /* One device in the Connected Devices list */
@@ -122,37 +236,74 @@ button:hover {
     border-radius: 6px;
 }
 
-/* Coordinator checkbox, IP:port box, Apply button and the status line under them */
-.coordinator-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 16px;
+/* Keep registration controls in one clear vertical workflow. */
+.connection-panel {
+    display: grid;
+    gap: 14px;
+    margin-bottom: 20px;
 }
 
 /* Keep the Coordinator and Client choices together and easy to scan. */
 .role-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 20px;
-    padding: 12px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 14px;
     border: 1px solid #555;
 }
 
-.role-options label {
+.role-card {
     display: flex;
-    align-items: center;
-    gap: 7px;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid #444;
     cursor: pointer;
+}
+
+.role-card:has(input:checked) {
+    border-color: #8bbcff;
+    background: #263442;
+}
+
+.role-card span,
+.role-card small {
+    display: block;
+}
+
+.role-card small {
+    margin-top: 4px;
+    color: #c5c5c5;
+    line-height: 1.35;
 }
 
 /* Group the controls used by each connection role. */
 #client-connection-controls,
 #coordinator-pairing-controls {
     display: grid;
-    gap: 8px;
-    padding: 12px;
+    gap: 12px;
+    padding: 16px;
     border: 1px solid #444;
+}
+
+.setup-heading h3,
+.setup-heading p,
+.registered-devices-heading h3,
+.registered-devices-heading p,
+.connection-summary h3 {
+    margin: 0;
+}
+
+.setup-heading p,
+.registered-devices-heading p {
+    margin-top: 4px;
+    color: #c5c5c5;
+    font-size: 0.85rem;
+}
+
+.field-group {
+    display: grid;
+    gap: 6px;
 }
 
 /* Hidden role groups must stay hidden even though they normally use grid. */
@@ -174,9 +325,47 @@ button:hover {
     margin-top: 4px;
 }
 /* The text box only, not the checkbox. min-width 0 stops it from overflowing the panel */
-.coordinator-controls input:not([type="checkbox"]) {
-    padding: 8px;
+.connection-panel input:not([type="checkbox"]):not([type="radio"]) {
+    padding: 10px;
     min-width: 0;
+}
+
+#pairing-code {
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: 0.3em;
+    text-align: center;
+}
+
+.primary-action,
+.secondary-action {
+    width: 100%;
+}
+
+.connection-summary {
+    display: grid;
+    gap: 8px;
+    padding: 16px;
+    border: 1px solid #444;
+    background: #202020;
+}
+
+.registered-devices-section {
+    display: grid;
+    gap: 12px;
+    padding-top: 18px;
+    border-top: 1px solid #444;
+}
+
+.registered-devices-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    gap: 14px;
+}
+
+.registered-devices-heading .secondary-action {
+    width: auto;
 }
 /* Registration status can contain long IDs and addresses, so let it wrap */
 #registration-status {
@@ -202,7 +391,37 @@ button:hover {
 /* Pairing status shows the temporary code without stretching the device panel. */
 #pairing-status {
     overflow-wrap: anywhere;
-    font-size: 0.85rem;
+}
+
+.pairing-code-card {
+    display: grid;
+    gap: 6px;
+    padding: 18px;
+    text-align: center;
+    border: 1px solid #666;
+    background: #242424;
+}
+
+#pairing-code-display {
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+}
+
+#pairing-countdown {
+    color: #c5c5c5;
+}
+
+.pairing-lockout {
+    display: grid;
+    gap: 4px;
+    padding: 12px;
+    border: 1px solid #d26a6a;
+    background: #3a2020;
+}
+
+.pairing-lockout[hidden] {
+    display: none;
 }
 
 /* Keep each registered device and its revoke action together. */
@@ -245,13 +464,6 @@ button:hover {
    Offline devices are disabled and faded. */
 button.device { width: 100%; text-align: left; white-space: pre-line; overflow-wrap: anywhere; }
 button.device:disabled { opacity: 0.55; cursor: default; }
-
-/* Recent Activity */
-.activity p span {
-    /* Fixed width so the labels line up */
-    display: inline-block;
-    width: 50px;
-}
 
 /* Keeps each activity on its own line */
 #recent-activity {
@@ -309,3 +521,48 @@ button.device:disabled { opacity: 0.55; cursor: default; }
 .file-table-scroll::-webkit-scrollbar-track { background: #232323; }
 .file-table-scroll::-webkit-scrollbar-thumb { background: #858585; border: 3px solid #232323; border-radius: 8px; }
 .file-table-scroll::-webkit-scrollbar-thumb:hover { background: #aaa; }
+
+/* Stack wide panels when the window is too narrow for two readable columns. */
+@media (max-width: 850px) {
+    .role-options {
+        grid-template-columns: 1fr;
+    }
+
+    .registered-devices-heading {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .registered-devices-heading .secondary-action {
+        width: 100%;
+    }
+
+    .dashboard-tabs {
+        padding-inline: 12px;
+    }
+
+    .dashboard-tab {
+        flex: 1;
+        justify-content: center;
+    }
+
+    .connection-banner {
+        align-items: stretch;
+        flex-direction: column;
+        margin-inline: 12px;
+    }
+
+    .sync-destination-section {
+        grid-template-columns: 1fr;
+        gap: 14px;
+        margin-inline: 12px;
+    }
+
+    .destination-controls {
+        grid-template-columns: 1fr;
+    }
+
+    .destination-status {
+        grid-column: 1;
+    }
+}

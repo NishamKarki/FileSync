@@ -14,6 +14,20 @@ import (
 	"time"
 )
 
+// Reuse TCP connections so large transfers do not exhaust local network ports.
+var transferHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy:               nil,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     90 * time.Second,
+	},
+	Timeout: 30 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
 // Rabindra Neupane
 // StartChunkTransfer creates an isolated receiver snapshot and returns the
 // chunks needed there. Existing comparison-only requests remain read-only.
@@ -113,15 +127,10 @@ func transferRequest(requestContext context.Context, deviceAddress, requestPath,
 	if transferRequestCreationError != nil {
 		return transferRequestCreationError
 	}
-	// Set the body type and create a direct HTTP client with redirects disabled.
+	// Set the body type before using the shared direct transfer client.
 	httpRequest.Header.Set("Content-Type", contentType)
-	httpClient := &http.Client{
-		Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	defer httpClient.CloseIdleConnections()
 	// Send the transfer request to the receiver.
-	httpResponse, transferRequestSendingError := httpClient.Do(httpRequest)
+	httpResponse, transferRequestSendingError := transferHTTPClient.Do(httpRequest)
 	if transferRequestSendingError != nil {
 		return fmt.Errorf("transfer request: %w", transferRequestSendingError)
 	}

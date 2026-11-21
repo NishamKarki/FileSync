@@ -30,10 +30,6 @@ export function GetCoordinatorPairingStatus() {
   return window['go']['main']['App']['GetCoordinatorPairingStatus']();
 }
 
-export function GetLocalIP() {
-  return window['go']['main']['App']['GetLocalIP']();
-}
-
 export function GetRegisteredDevices() {
   return window['go']['main']['App']['GetRegisteredDevices']();
 }
@@ -48,10 +44,6 @@ export function HandleFileEvent(arg1) {
 
 export function ListSyncedFiles() {
   return window['go']['main']['App']['ListSyncedFiles']();
-}
-
-export function PingDevice(arg1) {
-  return window['go']['main']['App']['PingDevice'](arg1);
 }
 
 export function ReconstructFile(arg1) {

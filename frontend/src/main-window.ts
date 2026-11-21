@@ -7,7 +7,6 @@ import {
     AddFiles,
     ListSyncedFiles,
     DiscoverDevices,
-    GetLocalIP,
     SendFile,
     SyncFile,
     ConfigureCoordinator,
@@ -33,6 +32,37 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <header class="title">
             <h1>FileSync</h1>
         </header>
+
+        <nav class="dashboard-tabs" aria-label="FileSync sections">
+            <button id="sync-dashboard-tab" class="dashboard-tab active-tab" type="button" aria-controls="sync-dashboard-panel" aria-selected="true">
+                Sync Dashboard
+            </button>
+            <button id="connections-tab" class="dashboard-tab" type="button" aria-controls="connections-panel" aria-selected="false">
+                Connections
+                <span id="connection-tab-status" class="tab-status-dot" aria-hidden="true"></span>
+            </button>
+        </nav>
+
+        <main id="sync-dashboard-panel" class="app-tab-panel" aria-labelledby="sync-dashboard-tab">
+            <div id="connection-banner" class="connection-banner" role="status" hidden>
+                <span id="connection-banner-message">Connect this device before syncing files.</span>
+                <button id="open-connections-button" type="button">Open Connections</button>
+            </div>
+            <section id="sync-destination-section" class="sync-destination-section">
+                <div class="destination-heading">
+                    <h2>Send to a device</h2>
+                    <p>Choose where the selected files should go.</p>
+                </div>
+                <div class="destination-controls">
+                    <label for="sync-destination-select">Destination</label>
+                    <select id="sync-destination-select">
+                        <option value="">Select an online device</option>
+                    </select>
+                    <p id="sync-destination-status" class="destination-status" role="status">No destination selected.</p>
+                </div>
+            </section>
+        </main>
+        <main id="connections-panel" class="app-tab-panel" aria-labelledby="connections-tab" hidden></main>
 
         <section class="select-file-to-sync">
             <div>
@@ -71,35 +101,63 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
             <div class="section devices">
                 <h2>Connected Devices</h2>
-                <div class="coordinator-controls">
+                <div class="connection-panel">
                     <fieldset class="role-options">
                         <legend>Choose this computer's role</legend>
-                        <label><input type="radio" id="coordinator-mode" name="device-role"> Coordinator</label>
-                        <label><input type="radio" id="client-mode" name="device-role" checked> Client</label>
+                        <label class="role-card">
+                            <input type="radio" id="coordinator-mode" name="device-role">
+                            <span><strong>Coordinator</strong><small>Create and manage the FileSync network.</small></span>
+                        </label>
+                        <label class="role-card">
+                            <input type="radio" id="client-mode" name="device-role" checked>
+                            <span><strong>Client</strong><small>Connect to an existing coordinator.</small></span>
+                        </label>
                     </fieldset>
-                    <div id="client-connection-controls">
-                        <label for="coordinator-address">Coordinator IP:port</label>
-                        <input id="coordinator-address" placeholder="192.168.1.10:8080" autocomplete="off">
-                        <label id="pairing-code-label" for="pairing-code">Pairing code</label>
-                        <input id="pairing-code" maxlength="6" inputmode="numeric" placeholder="6-digit code" autocomplete="one-time-code">
-                        <p class="connection-guidance">Ask the coordinator to allow a new device, then enter its code.</p>
-                        <button id="find-coordinator-button">Find Coordinator</button>
+                    <div id="client-connection-controls" class="setup-card">
+                        <div class="setup-heading">
+                            <h3>Connect to a coordinator</h3>
+                            <p>Find the coordinator or enter its address.</p>
+                        </div>
+                        <div class="field-group">
+                            <label for="coordinator-address">Coordinator address</label>
+                            <input id="coordinator-address" placeholder="192.168.1.10:8080" autocomplete="off">
+                        </div>
+                        <button id="find-coordinator-button" class="secondary-action">Find Coordinator</button>
                         <div id="coordinator-search-results" aria-live="polite"></div>
+                        <div class="field-group">
+                            <label id="pairing-code-label" for="pairing-code">Six-digit pairing code</label>
+                            <input id="pairing-code" maxlength="6" inputmode="numeric" placeholder="000 000" autocomplete="one-time-code">
+                        </div>
+                        <p class="connection-guidance">Ask the coordinator to allow a new device, then enter its code.</p>
+                        <div id="pairing-lockout" class="pairing-lockout" aria-live="assertive" hidden></div>
                     </div>
-                    <div id="coordinator-pairing-controls" hidden>
-                        <p>This computer accepts new clients only while pairing is open.</p>
+                    <button id="save-coordinator-button" class="primary-action">Connect</button>
+                    <div id="coordinator-pairing-controls" class="setup-card" hidden>
+                        <div class="setup-heading">
+                            <h3>Add a client</h3>
+                            <p>Open a temporary window for one new device.</p>
+                        </div>
                         <button id="start-pairing-button">Allow New Device for 2 Minutes</button>
-                        <div id="pairing-status" aria-live="polite">Pairing is closed.</div>
+                        <div id="pairing-status" class="pairing-code-card" aria-live="polite">
+                            <strong id="pairing-code-display">Pairing closed</strong>
+                            <span id="pairing-countdown">Create a code when the client is ready.</span>
+                        </div>
                     </div>
-                    <button id="save-coordinator-button">Connect</button>
-                    <div id="registration-status" aria-live="polite">Loading device registration...</div>
-                    <div id="connection-help" aria-live="polite"></div>
+                    <section class="connection-summary">
+                        <h3>This device</h3>
+                        <div id="registration-status" aria-live="polite">Loading device registration...</div>
+                        <div id="connection-help" aria-live="polite"></div>
+                    </section>
                 </div>
-                <button id="registered-devices-button">Registered Devices</button>
-
-                <div id="connected-devices">
-                    <p>Registered devices will appear after coordinator setup.</p>
-                </div>
+                <section class="registered-devices-section">
+                    <div class="registered-devices-heading">
+                        <div><h3>Registered devices</h3><p>Select an online device as the sync destination.</p></div>
+                        <button id="registered-devices-button" class="secondary-action">Refresh</button>
+                    </div>
+                    <div id="connected-devices">
+                        <p>Registered devices will appear after coordinator setup.</p>
+                    </div>
+                </section>
             </div>
 
             <div class="section activity">
@@ -127,20 +185,59 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     </div>
 `
-// Rabindra Neupane
-// Prints this computer's local IP in the console. Only used while developing.
-async function testLocalIP() {
-    try {
-        const localIP = await GetLocalIP();
-        console.log("FileSync local IP address:");
-        console.log(localIP);
-    }
-    catch (error) {
-        console.error("FileSync failed to get local IP address", error);
-    }
-}
-testLocalIP();
 
+// Rabindra Neupane
+// organizeDashboardPanels separates daily syncing from connection setup.
+function organizeDashboardPanels() {
+    // Move existing sections into their matching tab without recreating their controls.
+    const syncPanel = document.getElementById('sync-dashboard-panel');
+    const connectionsPanel = document.getElementById('connections-panel');
+    const filePicker = document.querySelector('.select-file-to-sync');
+    const fileDetails = document.querySelector('.file-details');
+    const destinationSection = document.querySelector('.sync-destination-section');
+    const deviceSection = document.querySelector('.devices');
+    const activitySection = document.querySelector('.activity');
+    const footer = document.querySelector('.footer');
+    const oldSplitLayout = document.querySelector('.progress-activity');
+    if (!syncPanel || !connectionsPanel) return;
+
+    // Keep file work, activity, and sync actions together on the dashboard.
+    if (filePicker) syncPanel.appendChild(filePicker);
+    if (fileDetails) syncPanel.appendChild(fileDetails);
+    if (destinationSection) syncPanel.appendChild(destinationSection);
+    if (activitySection) syncPanel.appendChild(activitySection);
+    if (footer) syncPanel.appendChild(footer);
+
+    // Keep all role, pairing, and device-management controls on Connections.
+    if (deviceSection) connectionsPanel.appendChild(deviceSection);
+    oldSplitLayout?.remove();
+}
+
+// Rabindra Neupane
+// showDashboardTab displays one workspace and updates accessible tab state.
+function showDashboardTab(tab: 'sync' | 'connections') {
+    // Find both tab buttons and panels.
+    const syncButton = document.querySelector<HTMLButtonElement>('#sync-dashboard-tab');
+    const connectionsButton = document.querySelector<HTMLButtonElement>('#connections-tab');
+    const syncPanel = document.getElementById('sync-dashboard-panel');
+    const connectionsPanel = document.getElementById('connections-panel');
+    if (!syncButton || !connectionsButton || !syncPanel || !connectionsPanel) return;
+
+    // Show only the selected panel and mark its button as active.
+    const showingSync = tab === 'sync';
+    syncPanel.hidden = !showingSync;
+    connectionsPanel.hidden = showingSync;
+    syncButton.classList.toggle('active-tab', showingSync);
+    connectionsButton.classList.toggle('active-tab', !showingSync);
+    syncButton.setAttribute('aria-selected', String(showingSync));
+    connectionsButton.setAttribute('aria-selected', String(!showingSync));
+}
+
+// Build the two workspaces before attaching control behavior.
+organizeDashboardPanels();
+document.getElementById('sync-dashboard-tab')?.addEventListener('click', () => showDashboardTab('sync'));
+document.getElementById('connections-tab')?.addEventListener('click', () => showDashboardTab('connections'));
+document.getElementById('open-connections-button')?.addEventListener('click', () => showDashboardTab('connections'));
 // Rabindra Neupane
 // Scans the network for a coordinator. Only runs when the user clicks Find Coordinator.
 async function findCoordinator() {
@@ -180,10 +277,62 @@ let ownDeviceAddress = '';
 let ownDeviceIsCoordinator = false;
 let pairingExpiresAt = 0;
 let activePairingCode = '';
+let pairingBlockedUntil = 0;
+let pairingAttemptsRemaining = 5;
+let registrationTabInitialized = false;
+let latestRegisteredDevices: ListedDevice[] = [];
+let registrationRetryUntil = 0;
 
 // Rabindra Neupane
 // A device as it comes back from the coordinator
 type ListedDevice = { id: string; name: string; ip: string; port: number; online: boolean; lastSeen?: string; coordinator?: boolean };
+
+// Rabindra Neupane
+// listedDeviceAddress formats an IPv4 or IPv6 address for network requests.
+function listedDeviceAddress(device: ListedDevice): string {
+    // Add brackets around IPv6 addresses before attaching the port.
+    return device.ip.includes(':') ? `[${device.ip}]:${device.port}` : `${device.ip}:${device.port}`;
+}
+
+// Rabindra Neupane
+// renderSyncDestinations lists online peers on the Sync Dashboard.
+function renderSyncDestinations(devices: ListedDevice[]) {
+    // Save the latest list so the destination dropdown can update the shared selection.
+    latestRegisteredDevices = devices;
+    const destinationSelect = document.querySelector<HTMLSelectElement>('#sync-destination-select');
+    const destinationStatus = document.getElementById('sync-destination-status');
+    if (!destinationSelect || !destinationStatus) return;
+
+    // Rebuild the list from online devices other than this computer.
+    destinationSelect.replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = 'Select an online device';
+    destinationSelect.appendChild(placeholder);
+    for (const device of devices.filter(device => device.online)) {
+        const option = document.createElement('option');
+        option.value = device.id;
+        option.textContent = `${device.name || 'Unknown device'} — ${listedDeviceAddress(device)}`;
+        destinationSelect.appendChild(option);
+    }
+
+    // Keep a valid selected device after the coordinator refreshes the list.
+    const selectedDevice = devices.find(device => device.id === selectedDeviceID && device.online);
+    if (selectedDevice) {
+        destinationSelect.value = selectedDevice.id;
+        selectedDeviceAddress = listedDeviceAddress(selectedDevice);
+        destinationStatus.textContent = `Selected: ${selectedDevice.name || 'Unknown device'} (${selectedDeviceAddress})`;
+        return;
+    }
+
+    // Clear a destination that is missing or no longer online.
+    selectedDeviceID = null;
+    selectedDeviceAddress = null;
+    destinationSelect.value = '';
+    destinationStatus.textContent = devices.some(device => device.online)
+        ? 'No destination selected.'
+        : 'No other online devices are available.';
+}
 
 // Rabindra Neupane
 // formatLastSeen converts the coordinator timestamp to this computer's timezone.
@@ -214,28 +363,35 @@ function renderDevices(devices: ListedDevice[]) {
     const container = document.getElementById(containerID);
     if (!container) return;
     const previousAddress = selectedDeviceAddress;
-    selectedDeviceAddress = null;
+    // Preserve the sync destination while showing coordinator discovery results.
+    if (!showingDiscovery) selectedDeviceAddress = null;
     container.replaceChildren();
     // Leave this computer out of its own list and put online devices first
     const peers = devices
         .filter(device => !ownDeviceID || device.id !== ownDeviceID)
         .sort((a, b) => Number(b.online) - Number(a.online));
     if (peers.length === 0) {
+        if (!showingDiscovery) renderSyncDestinations([]);
         container.textContent = showingDiscovery ? 'No coordinator found. Start one on another computer or enter its address manually.' : 'No other registered devices yet.';
         return;
     }
     for (const device of peers) {
         // IPv6 addresses need square brackets before the port
-        const address = device.ip.includes(':') ? `[${device.ip}]:${device.port}` : `${device.ip}:${device.port}`;
+        const address = listedDeviceAddress(device);
         const row = document.createElement('button');
         row.type = 'button';
         row.className = 'device';
+        row.dataset.deviceId = device.id;
         row.disabled = !device.online;
         // Show the last-seen value in the timezone of the computer viewing the list.
         if (device.lastSeen) row.title = `Last seen: ${formatLastSeen(device.lastSeen)}\nDevice ID: ${device.id}`;
         // Discovery chooses setup details; only registered rows choose sync targets.
         if (showingDiscovery) {
-            row.textContent = `${device.name} - Coordinator - ${address} - Use this coordinator`;
+            appendDetailRows(row, [
+                ['Coordinator', device.name || 'Unknown device'],
+                ['Address', address],
+                ['Status', 'Available — click to select']
+            ]);
             row.addEventListener('click', () => {
                 const mode = document.querySelector<HTMLInputElement>('#coordinator-mode');
                 const clientMode = document.querySelector<HTMLInputElement>('#client-mode');
@@ -272,6 +428,7 @@ function renderDevices(devices: ListedDevice[]) {
             selectedDeviceAddress = address;
             container.querySelectorAll('.device').forEach(element => element.classList.remove('selected-device'));
             row.classList.add('selected-device');
+            renderSyncDestinations(peers);
         });
         // Group the selectable device card with its coordinator-only revoke action.
         const deviceEntry = document.createElement('div');
@@ -302,7 +459,29 @@ function renderDevices(devices: ListedDevice[]) {
         }
         container.appendChild(deviceEntry);
     }
+    // Keep the dashboard dropdown synchronized with the registered-device list.
+    if (!showingDiscovery) renderSyncDestinations(peers);
 }
+
+// Select the same destination whether it is chosen on Dashboard or Connections.
+document.getElementById('sync-destination-select')?.addEventListener('change', event => {
+    // Match the selected device ID to the coordinator's latest online list.
+    const destinationSelect = event.currentTarget as HTMLSelectElement;
+    const selectedDevice = latestRegisteredDevices.find(device => device.id === destinationSelect.value && device.online);
+    selectedDeviceID = selectedDevice?.id ?? null;
+    selectedDeviceAddress = selectedDevice ? listedDeviceAddress(selectedDevice) : null;
+
+    // Update the status text and the matching card in Connections.
+    const destinationStatus = document.getElementById('sync-destination-status');
+    if (destinationStatus) {
+        destinationStatus.textContent = selectedDevice
+            ? `Selected: ${selectedDevice.name || 'Unknown device'} (${selectedDeviceAddress})`
+            : 'No destination selected.';
+    }
+    document.querySelectorAll<HTMLElement>('#connected-devices .device').forEach(deviceCard => {
+        deviceCard.classList.toggle('selected-device', deviceCard.dataset.deviceId === selectedDeviceID);
+    });
+});
 
 // Rabindra Neupane
 // Fills a box with "label: value" rows. Everything goes in as text, not HTML,
@@ -342,8 +521,8 @@ function friendlyConnectionError(error: unknown): string {
     if (message.includes('pairing is closed')) {
         return 'Pairing is closed. Ask the coordinator to click Allow New Device.';
     }
-    if (message.includes('pairing code is invalid')) {
-        return 'The pairing code is invalid or expired. Generate a new code on the coordinator.';
+    if (message.includes('pairing code is invalid') || message.includes('pairing code is incorrect')) {
+        return 'Incorrect pairing code. Check the code shown on the coordinator.';
     }
     if (message.includes('too many pairing attempts')) {
         return 'Too many incorrect pairing attempts. Wait five minutes before trying again.';
@@ -358,11 +537,52 @@ function friendlyConnectionError(error: unknown): string {
 }
 
 // Rabindra Neupane
+// updateConnectionNavigation shows connection health without mixing setup into syncing.
+function updateConnectionNavigation(status: Awaited<ReturnType<typeof GetRegistrationStatus>>) {
+    // Update the small status indicator in the Connections tab.
+    const statusDot = document.getElementById('connection-tab-status');
+    const connectionBanner = document.getElementById('connection-banner');
+    const bannerMessage = document.getElementById('connection-banner-message');
+    statusDot?.classList.toggle('connected', status.registered);
+    statusDot?.classList.toggle('attention', !status.registered);
+
+    // Show a dashboard shortcut whenever syncing is not ready.
+    if (connectionBanner) connectionBanner.hidden = status.registered;
+    if (bannerMessage && !status.registered) {
+        bannerMessage.textContent = status.state === 'revoked'
+            ? 'This registration was removed. Pair the device again in Connections.'
+            : status.state === 'pairing-required'
+                ? 'Enter a valid pairing code in Connections before syncing.'
+                : 'Finish connection setup before syncing files.';
+    }
+
+    // Choose the most useful tab only once when the application starts.
+    if (!registrationTabInitialized) {
+        showDashboardTab(status.registered ? 'sync' : 'connections');
+        registrationTabInitialized = true;
+    }
+}
+
+// Rabindra Neupane
 // Shows this computer's role, the coordinator address and whether it's registered
 function renderRegistrationStatus(
     container: HTMLElement,
     status: Awaited<ReturnType<typeof GetRegistrationStatus>>
 ) {
+    // Reflect connection readiness in the navigation and Sync Dashboard banner.
+    updateConnectionNavigation(status);
+
+    // Keep the client lockout display synchronized with the coordinator response.
+    pairingAttemptsRemaining = status.pairingAttemptsRemaining ?? 5;
+    pairingBlockedUntil = status.pairingBlockedUntil
+        ? new Date(status.pairingBlockedUntil).getTime()
+        : 0;
+    // Convert the backend retry delay into a local deadline for a smooth countdown.
+    registrationRetryUntil = !status.registered && status.retryInSeconds > 0
+        ? Date.now() + status.retryInSeconds * 1000
+        : 0;
+    renderPairingLockout();
+
     // Nothing set up yet, so just tell the user what to do
     if (!status.configured) {
         container.classList.remove('registration-details');
@@ -373,7 +593,11 @@ function renderRegistrationStatus(
     // Translate the backend lifecycle state into one clear instruction.
     const stateMessages: Record<string, string> = {
         'not-configured': 'Not configured',
-        'pairing-required': 'Pairing required — enter a new code and click Connect',
+        'pairing-required': pairingBlockedUntil > Date.now()
+            ? 'Registration temporarily blocked'
+            : pairingAttemptsRemaining < 5
+                ? `Incorrect pairing code — ${pairingAttemptsRemaining} attempts remaining`
+                : 'Pairing required — enter a new code and click Connect',
         'registering': 'Registering with the coordinator',
         'registered': 'Securely connected',
         'reconnecting': status.retryInSeconds > 0
@@ -400,11 +624,14 @@ function renderRegistrationStatus(
         connectionHelp.replaceChildren();
         if (!status.registered && status.lastError) {
             const retryMessage = document.createElement('p');
-            retryMessage.textContent = status.state === 'pairing-required' || status.state === 'revoked'
-                ? 'Automatic registration is paused until a new pairing code is submitted.'
-                : status.retryInSeconds > 0
-                    ? `Registration will retry automatically in about ${status.retryInSeconds} seconds.`
-                    : 'Registration will retry automatically.';
+            retryMessage.id = 'registration-retry-message';
+            retryMessage.textContent = pairingBlockedUntil > Date.now()
+                ? 'Registration is paused until the lockout timer reaches zero.'
+                : status.state === 'pairing-required' || status.state === 'revoked'
+                    ? 'Automatic registration is paused until a new pairing code is submitted.'
+                    : status.retryInSeconds > 0
+                        ? `Registration will retry automatically in about ${status.retryInSeconds} seconds.`
+                        : 'Registration will retry automatically.';
             const details = document.createElement('details');
             const summary = document.createElement('summary');
             summary.textContent = 'Technical details';
@@ -412,6 +639,7 @@ function renderRegistrationStatus(
             technicalError.textContent = status.lastError;
             details.append(summary, technicalError);
             connectionHelp.append(retryMessage, details);
+            renderRegistrationRetryCountdown();
         }
     }
 }
@@ -432,11 +660,11 @@ async function refreshRegistration() {
         const mode = document.querySelector<HTMLInputElement>('#coordinator-mode');
         const clientMode = document.querySelector<HTMLInputElement>('#client-mode');
         const address = document.querySelector<HTMLInputElement>('#coordinator-address');
-        // Fill in the saved settings once at startup, but never over something the user is typing
+        // Restore only the saved role; keep the client address field ready for a new connection.
         if (!registrationSettingsLoaded && !registrationSettingsEdited && mode && address) {
             mode.checked = status.coordinator;
             if (clientMode) clientMode.checked = !status.coordinator;
-            address.value = status.coordinatorAddress;
+            address.value = '';
             address.disabled = mode.checked;
         }
         // Keep unsaved controls aligned with the checkbox instead of the old backend role.
@@ -483,6 +711,53 @@ const coordinatorAddress = document.querySelector<HTMLInputElement>('#coordinato
 const pairingCodeInput = document.querySelector<HTMLInputElement>('#pairing-code');
 const startPairingButton = document.querySelector<HTMLButtonElement>('#start-pairing-button');
 const saveCoordinatorButton = document.querySelector<HTMLButtonElement>('#save-coordinator-button');
+
+// Rabindra Neupane
+// renderPairingLockout keeps the coordinator-controlled five-minute timer visible.
+function renderPairingLockout() {
+    // Read the client controls that must remain locked during the timeout.
+    const lockoutMessage = document.getElementById('pairing-lockout');
+    const clientSelected = clientMode?.checked ?? false;
+    const remainingSeconds = Math.max(0, Math.ceil((pairingBlockedUntil - Date.now()) / 1000));
+    const blocked = clientSelected && remainingSeconds > 0;
+    if (!lockoutMessage) return;
+
+    // Disable new attempts until the coordinator's deadline has passed.
+    if (pairingCodeInput) pairingCodeInput.disabled = blocked;
+    if (saveCoordinatorButton) saveCoordinatorButton.disabled = blocked;
+    lockoutMessage.hidden = !blocked;
+
+    // Show a stable minutes-and-seconds countdown while registration is blocked.
+    if (blocked) {
+        const minutes = Math.floor(remainingSeconds / 60);
+        const seconds = String(remainingSeconds % 60).padStart(2, '0');
+        lockoutMessage.replaceChildren();
+        const heading = document.createElement('strong');
+        heading.textContent = 'Too many incorrect pairing attempts.';
+        const countdown = document.createElement('span');
+        countdown.textContent = `Try again in ${minutes}:${seconds}`;
+        lockoutMessage.append(heading, countdown);
+        return;
+    }
+
+    // Clear an expired lockout and allow the client to submit a new code.
+    if (pairingBlockedUntil > 0 && remainingSeconds === 0) pairingBlockedUntil = 0;
+    lockoutMessage.replaceChildren();
+}
+
+// Rabindra Neupane
+// renderRegistrationRetryCountdown continuously shows the next automatic retry.
+function renderRegistrationRetryCountdown() {
+    // Keep special pairing instructions unchanged while pairing is paused or blocked.
+    const retryMessage = document.getElementById('registration-retry-message');
+    if (!retryMessage || pairingBlockedUntil > Date.now() || registrationRetryUntil <= 0) return;
+
+    // Calculate the remaining whole seconds from the latest coordinator deadline.
+    const remainingSeconds = Math.max(0, Math.ceil((registrationRetryUntil - Date.now()) / 1000));
+    retryMessage.textContent = remainingSeconds > 0
+        ? `Registration will retry automatically in ${remainingSeconds} ${remainingSeconds === 1 ? 'second' : 'seconds'}.`
+        : 'Registration retrying now...';
+}
 
 // Rabindra Neupane
 // showConnectionHelp keeps raw network details available without crowding the main message.
@@ -550,41 +825,47 @@ function updateCoordinatorSecurityControls(coordinator: boolean) {
 // renderPairingCountdown shows how long the temporary code can still be used.
 function renderPairingCountdown() {
     // Stop when the pairing message is not on this page.
-    const pairingStatus = document.getElementById('pairing-status');
-    if (!pairingStatus || !activePairingCode || pairingExpiresAt <= 0) return;
+    const pairingCodeDisplay = document.getElementById('pairing-code-display');
+    const pairingCountdown = document.getElementById('pairing-countdown');
+    if (!pairingCodeDisplay || !pairingCountdown || !activePairingCode || pairingExpiresAt <= 0) return;
 
     // Calculate a readable minutes-and-seconds countdown.
     const remainingSeconds = Math.max(0, Math.ceil((pairingExpiresAt - Date.now()) / 1000));
     if (remainingSeconds === 0) {
-        pairingStatus.textContent = 'Pairing code expired. Click Allow New Device to create another code.';
+        pairingCodeDisplay.textContent = 'Pairing closed';
+        pairingCountdown.textContent = 'Code expired. Create another code when the client is ready.';
         activePairingCode = '';
         pairingExpiresAt = 0;
         return;
     }
     const minutes = Math.floor(remainingSeconds / 60);
     const seconds = String(remainingSeconds % 60).padStart(2, '0');
-    pairingStatus.textContent = `Pairing code: ${activePairingCode} (${minutes}:${seconds} remaining)`;
+    pairingCodeDisplay.textContent = activePairingCode.replace(/(\d{3})(\d{3})/, '$1 $2');
+    pairingCountdown.textContent = `${minutes}:${seconds} remaining`;
 }
 
 // Rabindra Neupane
 // refreshPairingStatus displays the active code and its local expiration time.
 async function refreshPairingStatus() {
     // Stop when the pairing status area is not available.
-    const pairingStatus = document.getElementById('pairing-status');
-    if (!pairingStatus) return;
+    const pairingCodeDisplay = document.getElementById('pairing-code-display');
+    const pairingCountdown = document.getElementById('pairing-countdown');
+    if (!pairingCodeDisplay || !pairingCountdown) return;
     try {
         const status = await GetCoordinatorPairingStatus();
         if (!status.active) {
             activePairingCode = '';
             pairingExpiresAt = 0;
-            pairingStatus.textContent = 'Pairing is closed.';
+            pairingCodeDisplay.textContent = 'Pairing closed';
+            pairingCountdown.textContent = 'Create a code when the client is ready.';
             return;
         }
         activePairingCode = status.code ?? '';
         pairingExpiresAt = status.expiresAt ? new Date(status.expiresAt).getTime() : 0;
         renderPairingCountdown();
     } catch (error) {
-        pairingStatus.textContent = `Cannot read pairing status: ${error}`;
+        pairingCodeDisplay.textContent = 'Pairing unavailable';
+        pairingCountdown.textContent = friendlyConnectionError(error);
     }
 }
 // No address needed when this computer is the coordinator itself
@@ -594,6 +875,8 @@ coordinatorMode?.addEventListener('change', () => {
 });
 clientMode?.addEventListener('change', () => {
     registrationSettingsEdited = true;
+    // Start each manual client setup with a blank field and visible example.
+    if (clientMode.checked && coordinatorAddress) coordinatorAddress.value = '';
     updateCoordinatorSecurityControls(!clientMode.checked);
 });
 coordinatorAddress?.addEventListener('input', () => {
@@ -620,6 +903,7 @@ saveCoordinatorButton?.addEventListener('click', async () => {
         showConnectionHelp(error);
     } finally {
         saveCoordinatorButton.disabled = false;
+        renderPairingLockout();
     }
 });
 
@@ -630,8 +914,10 @@ startPairingButton?.addEventListener('click', async () => {
         await StartCoordinatorPairing();
         await refreshPairingStatus();
     } catch (error) {
-        const pairingStatus = document.getElementById('pairing-status');
-        if (pairingStatus) pairingStatus.textContent = `Cannot start pairing: ${error}`;
+        const pairingCodeDisplay = document.getElementById('pairing-code-display');
+        const pairingCountdown = document.getElementById('pairing-countdown');
+        if (pairingCodeDisplay) pairingCodeDisplay.textContent = 'Cannot create code';
+        if (pairingCountdown) pairingCountdown.textContent = friendlyConnectionError(error);
     } finally {
         startPairingButton.disabled = false;
     }
@@ -674,6 +960,26 @@ async function transferSelectedFiles(wholeFile: boolean) {
         if (recentFileActivity) recentFileActivity.textContent = 'Please select files and a device first.';
         return;
     }
+
+    // Recheck the selected peer immediately before sending any file data.
+    if (selectedDeviceID) {
+        try {
+            const registeredDevices = await GetRegisteredDevices();
+            const selectedDevice = registeredDevices.find(device => device.id === selectedDeviceID);
+            if (!selectedDevice?.online) {
+                selectedDeviceID = null;
+                selectedDeviceAddress = null;
+                if (recentFileActivity) {
+                    recentFileActivity.textContent = 'The selected device is offline. Refresh the device list and choose an online device.';
+                }
+                await refreshRegistration();
+                return;
+            }
+        } catch (error) {
+            if (recentFileActivity) recentFileActivity.textContent = `Cannot verify the selected device: ${friendlyConnectionError(error)}`;
+            return;
+        }
+    }
     const names = [...selectedFileNames];
     const address = selectedDeviceAddress;
     const button = wholeFile ? wholeFileButton : syncNowButton;
@@ -699,7 +1005,7 @@ async function transferSelectedFiles(wholeFile: boolean) {
                     outcomes.push(`${name}: ${details}${result.baseUpdated ? '' : ' Local file changed during transfer; latest edits are not confirmed synced.'}`);
                 }
             } catch (error) {
-                outcomes.push(`Failed to ${wholeFile ? 'send' : 'sync'} ${name}: ${error}`);
+                outcomes.push(`Failed to ${wholeFile ? 'send' : 'sync'} ${name}: ${friendlyConnectionError(error)}`);
             }
         }
     } finally {
@@ -859,9 +1165,13 @@ EventsOn('file-change', (modifiedFile: string) => {
 void refreshRegistration();
 const registrationRefreshTimer = window.setInterval(() => { void refreshRegistration(); }, 5000);
 const pairingCountdownTimer = window.setInterval(renderPairingCountdown, 1000);
+const pairingLockoutTimer = window.setInterval(renderPairingLockout, 1000);
+const registrationRetryTimer = window.setInterval(renderRegistrationRetryCountdown, 1000);
 window.addEventListener('beforeunload', () => {
     window.clearInterval(registrationRefreshTimer);
     window.clearInterval(pairingCountdownTimer);
+    window.clearInterval(pairingLockoutTimer);
+    window.clearInterval(registrationRetryTimer);
 });
 
 // Santosh Tripathee - sets up the Conflicts button, panel and pop-up notice (conflict-panel.ts)
