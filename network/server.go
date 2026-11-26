@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -52,7 +53,25 @@ func pingHandler(responseWriter http.ResponseWriter, _ *http.Request, registry *
 // Rabindra Neupane
 // StartServer registers FileSync routes and runs the local HTTP server.
 // Reconstruction implementation: Nisham Karki. Network integration: Rabindra Neupane.
-func StartServer(serverContext context.Context, serverPort string, completeTransfer func(FileMetadata, string) error, registry *DeviceRegistry) {
+func StartServer(serverContext context.Context, serverPort string, completeTransfer func(FileMetadata, string) error, registry *DeviceRegistry, transferAccepted func()) {
+	// Read the project folder used for transfer staging and chunk storage.
+	projectDirectory, projectDirectoryReadingError := os.Getwd()
+	if projectDirectoryReadingError != nil {
+		fmt.Println("Cannot locate transfer storage:", projectDirectoryReadingError)
+		return
+	}
+	// Bind the requested port before creating the serving loop.
+	listener, listenerCreationError := net.Listen("tcp", ":"+serverPort)
+	if listenerCreationError != nil {
+		fmt.Println("Network server error:", listenerCreationError)
+		return
+	}
+	StartServerAtRoot(serverContext, listener, projectDirectory, completeTransfer, registry, transferAccepted)
+}
+
+// StartServerAtRoot serves FileSync from an explicit root and listener.
+// Tests use this entry point to isolate several nodes with temporary roots and ports.
+func StartServerAtRoot(serverContext context.Context, listener net.Listener, projectDirectory string, completeTransfer func(FileMetadata, string) error, registry *DeviceRegistry, transferAccepted func()) {
 	// Create the server router and register the discovery endpoint.
 	serverRoutes := http.NewServeMux()
 	serverRoutes.HandleFunc("/ping", func(responseWriter http.ResponseWriter, httpRequest *http.Request) {
@@ -66,24 +85,18 @@ func StartServer(serverContext context.Context, serverPort string, completeTrans
 		serverRoutes.Handle("/devices", registry.Handler())
 		serverRoutes.Handle("/devices/", registry.Handler())
 	}
-	// Read the project folder used for transfer staging and chunk storage.
-	projectDirectory, projectDirectoryReadingError := os.Getwd()
-	if projectDirectoryReadingError != nil {
-		fmt.Println("Cannot locate transfer storage:", projectDirectoryReadingError)
-		return
-	}
 	// Serve only accepted verified chunks for peer reconstruction requests.
 	serverRoutes.HandleFunc("/chunks/data", chunkDataHandler(projectDirectory))
 	// Register benchmark whole-file transfer and normal incremental transfer routes.
-	serverRoutes.Handle("/file", NewWholeFileSendHandler(projectDirectory, completeTransfer))
-	serverRoutes.Handle("/transfer/", NewTransferHandler(projectDirectory, completeTransfer))
+	serverRoutes.Handle("/file", NewWholeFileSendHandler(projectDirectory, completeTransfer, transferAccepted))
+	serverRoutes.Handle("/transfer/", NewTransferHandler(projectDirectory, completeTransfer, transferAccepted))
 
 	// Log the listening port for manual testing.
-	fmt.Println("FileSync Network Server Starting...", serverPort)
-	fmt.Println("Listening on port:", serverPort)
+	fmt.Println("FileSync Network Server Starting...", listener.Addr().String())
+	fmt.Println("Listening on port:", listener.Addr().String())
 
 	// Create the HTTP server with a bounded header timeout.
-	networkServer := &http.Server{Addr: ":" + serverPort, Handler: serverRoutes, ReadHeaderTimeout: 5 * time.Second}
+	networkServer := &http.Server{Handler: serverRoutes, ReadHeaderTimeout: 5 * time.Second}
 	// Create a signal that prevents shutdown after normal server exit.
 	serverStopped := make(chan struct{})
 	defer close(serverStopped)
@@ -102,7 +115,7 @@ func StartServer(serverContext context.Context, serverPort string, completeTrans
 		networkServer.Shutdown(shutdownContext)
 	}()
 	// Run the server until shutdown or an unexpected listening error.
-	networkServerError := networkServer.ListenAndServe()
+	networkServerError := networkServer.Serve(listener)
 	// Report unexpected server errors but ignore normal shutdown.
 	if networkServerError != nil && !errors.Is(networkServerError, http.ErrServerClosed) {
 		fmt.Println("Network server error:", networkServerError)

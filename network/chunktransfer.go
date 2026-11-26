@@ -34,25 +34,26 @@ type incomingTransfer struct {
 // transferReceiver stores active transfers and uses one lock to prevent chunk
 // writes from racing with final verification and reconstruction.
 type transferReceiver struct {
-	mutex       sync.Mutex
-	projectRoot string
-	reconstruct func(FileMetadata, string) error
-	transfers   map[string]*incomingTransfer
+	mutex            sync.Mutex
+	projectRoot      string
+	reconstruct      func(FileMetadata, string) error
+	transferAccepted func()
+	transfers        map[string]*incomingTransfer
 }
 
 // Rabindra Neupane
 // newTransferReceiver creates the shared state used by all transfer endpoints.
-func newTransferReceiver(root string, reconstruct func(FileMetadata, string) error) *transferReceiver {
+func newTransferReceiver(root string, reconstruct func(FileMetadata, string) error, transferAccepted func()) *transferReceiver {
 	// Create one transfer map shared by the start, chunk, and complete routes.
-	return &transferReceiver{projectRoot: root, reconstruct: reconstruct, transfers: make(map[string]*incomingTransfer)}
+	return &transferReceiver{projectRoot: root, reconstruct: reconstruct, transferAccepted: transferAccepted, transfers: make(map[string]*incomingTransfer)}
 }
 
 // Rabindra Neupane
 // NewTransferHandler shares the same receiver state across all transfer endpoints.
 // An explicit root also allows end-to-end tests to use temporary storage.
-func NewTransferHandler(root string, reconstruct func(FileMetadata, string) error) http.Handler {
+func NewTransferHandler(root string, reconstruct func(FileMetadata, string) error, transferAccepted func()) http.Handler {
 	// Create one receiver so all three endpoints see the same transfer state.
-	receiver := newTransferReceiver(root, reconstruct)
+	receiver := newTransferReceiver(root, reconstruct, transferAccepted)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/transfer/start", receiver.start)
 	mux.HandleFunc("/transfer/chunk", receiver.chunk)
@@ -354,6 +355,10 @@ func (receiver *transferReceiver) complete(responseWriter http.ResponseWriter, h
 	if verifiedChunkCachingError := cacheVerifiedTransfer(receiver.projectRoot, transfer.root, transfer.metadata); verifiedChunkCachingError != nil {
 		reportTransferFailure(responseWriter, completionRequest.TransferID, transfer.metadata.FileName, "Cache verified chunks", verifiedChunkCachingError, 500)
 		return
+	}
+	// Report the accepted cache after every chunk is safely available to peers.
+	if receiver.transferAccepted != nil {
+		go receiver.transferAccepted()
 	}
 	// Save the successful result so a lost acknowledgement can be retried safely.
 	transfer.completed = true

@@ -27,80 +27,47 @@ import { setupConflictPanel } from './conflict-panel' ;
 
 // Layout of the whole window. The functions below fill in the lists and status text.
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-    <div class="app">
-
-        <header class="title">
-            <h1>FileSync</h1>
-        </header>
-
-        <nav class="dashboard-tabs" aria-label="FileSync sections">
-            <button id="sync-dashboard-tab" class="dashboard-tab active-tab" type="button" aria-controls="sync-dashboard-panel" aria-selected="true">
-                Sync Dashboard
-            </button>
-            <button id="connections-tab" class="dashboard-tab" type="button" aria-controls="connections-panel" aria-selected="false">
-                Connections
-                <span id="connection-tab-status" class="tab-status-dot" aria-hidden="true"></span>
-            </button>
-        </nav>
-
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand"><span class="brand-mark" aria-hidden="true">↗</span><div><strong>FileSync</strong><span>P2P Block Sync</span></div></div>
+            <nav class="dashboard-tabs" aria-label="FileSync sections">
+                <button id="sync-dashboard-tab" class="dashboard-tab active-tab" type="button" aria-controls="sync-dashboard-panel" aria-selected="true"><span class="nav-icon">⌁</span>FileSync Workspace</button>
+                <button id="connections-tab" class="dashboard-tab" type="button" aria-controls="connections-panel" aria-selected="false"><span class="nav-icon">◌</span>Connections &amp; Peers<span id="connection-tab-status" class="tab-status-dot" aria-hidden="true"></span></button>
+            </nav>
+            <button id="conflicts-button" class="sidebar-conflicts" type="button"><span class="nav-icon">△</span>Conflicts</button>
+            <section class="local-node-card" aria-label="Local FileSync node"><span class="local-node-label">LOCAL NODE</span><strong id="sidebar-device-name">Loading device...</strong><span id="sidebar-device-address">Checking connection...</span><span id="sidebar-role" class="role-badge">Client</span></section>
+        </aside>
+        <div class="workspace-shell">
+            <header class="workspace-header"><div><h1 id="workspace-title">FileSync Workspace</h1><p><span class="folder-dot"></span>Synced Files</p></div></header>
         <main id="sync-dashboard-panel" class="app-tab-panel" aria-labelledby="sync-dashboard-tab">
             <div id="connection-banner" class="connection-banner" role="status" hidden>
                 <span id="connection-banner-message">Connect this device before syncing files.</span>
                 <button id="open-connections-button" type="button">Open Connections</button>
             </div>
-            <section id="sync-destination-section" class="sync-destination-section">
-                <div class="destination-heading">
-                    <h2>Send to a device</h2>
-                    <p>Choose where the selected files should go.</p>
-                </div>
-                <div class="destination-controls">
-                    <label for="sync-destination-select">Destination</label>
-                    <select id="sync-destination-select">
-                        <option value="">Select an online device</option>
-                    </select>
-                    <p id="sync-destination-status" class="destination-status" role="status">No destination selected.</p>
-                </div>
+            <section class="select-file-to-sync">
+                <div><h2>Synced Files</h2><p id="selected-files" class="file-path">No files selected</p></div>
+                <button id="select-file-button" class="add-files-button" type="button">+ Add Files</button>
+                <p class="sync-folder-hint">Files are staged in <strong>Synced Files</strong> and ready for peer transfer.</p>
             </section>
+            <section class="file-details">
+                <p id="file-list-status" role="status"></p>
+                <div class="file-table-scroll" tabindex="0" role="region" aria-label="Files in Synced Files, scroll to view more"><table class="file-table"><thead><tr><th><input id="select-all-files" type="checkbox" aria-label="Select all files"></th><th>File name</th><th>Status</th><th>Size</th><th>Modified</th></tr></thead><tbody id="synced-file-list"></tbody></table></div>
+                <div id="file-empty-state" class="file-empty-state" hidden><span class="empty-icon">⇩</span><h3>No files in Synced Files</h3><p>Add files to stage them for your connected peers.</p><button id="empty-add-files" type="button">Add Files</button></div>
+            </section>
+            <section id="sync-destination-section" class="sync-destination-section">
+                <div class="destination-heading"><span id="selected-file-count" class="selection-pill">0 files selected</span><p id="sync-destination-status" class="destination-status" role="status">Choose an online destination.</p></div>
+                <div class="destination-controls">
+                    <label for="peer-picker-trigger">Send to</label>
+                    <div class="peer-picker"><button id="peer-picker-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">Select an online device <span>⌄</span></button><div id="peer-picker-popover" class="peer-picker-popover" role="listbox" hidden></div></div>
+                    <select id="sync-destination-select" class="visually-hidden"><option value="">Select an online device</option></select>
+                </div>
+                <div class="transfer-actions"><button id="sync-now-button" class="sync-primary" type="button">Sync Now</button><details class="transfer-diagnostics"><summary>Benchmark / Diagnostics</summary><button id="send-whole-file-button" type="button">Benchmark (Whole File)</button></details></div>
+            </section>
+            <section class="section activity"><div class="activity-heading"><h2>Live Activity</h2><span class="activity-pulse">Live</span></div><p id="recent-activity">No recent activity</p><details id="transfer-error-details" hidden><summary>Technical details</summary><pre id="transfer-error-text"></pre></details></section>
         </main>
-        <main id="connections-panel" class="app-tab-panel" aria-labelledby="connections-tab" hidden></main>
-
-        <section class="select-file-to-sync">
-            <div>
-                <h2>Choose file to sync</h2>
-                <p class="file-path" id="selected-files">No file selected</p>
-            </div>
-
-            <div>
-                <button id="select-file-button">Add files from computer</button>
-                <p>Add files to Synced Files.</p>
-            </div>
-        </section>
-
-        <section class="file-details">
-            <h2>Files in Synced Files</h2>
-            <p>Select one or more files below to sync their working copies.</p>
-            <p id="file-list-status" role="status"></p>
-
-            <div class="file-table-scroll" tabindex="0" role="region" aria-label="Files in Synced Files, scroll to view more">
-            <table class="file-table">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Status</th>
-                        <th>Size</th>
-                        <th>Modified</th>
-                    </tr>
-                </thead>
-
-                <tbody id="synced-file-list"></tbody>
-            </table>
-            </div>
-        </section>
-
-        <section class="progress-activity">
-
+        <main id="connections-panel" class="app-tab-panel" aria-labelledby="connections-tab" hidden>
             <div class="section devices">
-                <h2>Connected Devices</h2>
+                <div class="connections-heading"><p>Set up this device and manage the peers on your local network.</p></div>
                 <div class="connection-panel">
                     <fieldset class="role-options">
                         <legend>Choose this computer's role</legend>
@@ -159,62 +126,39 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
                     </div>
                 </section>
             </div>
-
-            <div class="section activity">
-                <h2>Recent Activity</h2>
-
-                <p id="recent-activity">No Files Modified</p>
-                <details id="transfer-error-details" hidden>
-                    <summary>Technical details</summary>
-                    <pre id="transfer-error-text"></pre>
-                </details>
-            </div>
-
-        </section>
-
-        <footer class="footer">
-            <button id="sync-now-button">Sync Now</button>
-            <details class="transfer-diagnostics">
-                <summary>Transfer diagnostics</summary>
-                <div>
-                    <button id="send-whole-file-button">Send Whole File</button>
-                </div>
-            </details>
-
-            <div>
-                <button id="conflicts-button">Conflicts</button>
-                <button>Settings</button>
-            </div>
-        </footer>
-
+        </main>
     </div>
 `
+
+// renderNavigationIcon replaces legacy text glyphs with crisp, scalable sidebar icons.
+function renderNavigationIcon(buttonID: string, paths: string[], circle = false) {
+    const icon = document.querySelector<HTMLElement>('#' + buttonID + ' .nav-icon');
+    if (!icon) return;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.classList.add('nav-icon');
+    if (circle) {
+        const node = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        node.setAttribute('cx', '8');
+        node.setAttribute('cy', '8');
+        node.setAttribute('r', '2.2');
+        svg.appendChild(node);
+    }
+    for (const pathData of paths) {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', pathData);
+        svg.appendChild(path);
+    }
+    icon.replaceWith(svg);
+}
+renderNavigationIcon('sync-dashboard-tab', ['M3 8h10', 'M9 4l4 4-4 4', 'M7 12 3 8l4-4']);
+renderNavigationIcon('connections-tab', ['M2.5 5.5a7 7 0 0 1 11 0', 'M2.5 10.5a7 7 0 0 0 11 0'], true);
 
 // Rabindra Neupane
 // organizeDashboardPanels separates daily syncing from connection setup.
 function organizeDashboardPanels() {
-    // Move existing sections into their matching tab without recreating their controls.
-    const syncPanel = document.getElementById('sync-dashboard-panel');
-    const connectionsPanel = document.getElementById('connections-panel');
-    const filePicker = document.querySelector('.select-file-to-sync');
-    const fileDetails = document.querySelector('.file-details');
-    const destinationSection = document.querySelector('.sync-destination-section');
-    const deviceSection = document.querySelector('.devices');
-    const activitySection = document.querySelector('.activity');
-    const footer = document.querySelector('.footer');
-    const oldSplitLayout = document.querySelector('.progress-activity');
-    if (!syncPanel || !connectionsPanel) return;
-
-    // Keep file work, activity, and sync actions together on the dashboard.
-    if (filePicker) syncPanel.appendChild(filePicker);
-    if (fileDetails) syncPanel.appendChild(fileDetails);
-    if (destinationSection) syncPanel.appendChild(destinationSection);
-    if (activitySection) syncPanel.appendChild(activitySection);
-    if (footer) syncPanel.appendChild(footer);
-
-    // Keep all role, pairing, and device-management controls on Connections.
-    if (deviceSection) connectionsPanel.appendChild(deviceSection);
-    oldSplitLayout?.remove();
+    // The shell already groups controls into the Sync and Connections views.
 }
 
 // Rabindra Neupane
@@ -235,6 +179,8 @@ function showDashboardTab(tab: 'sync' | 'connections') {
     connectionsButton.classList.toggle('active-tab', !showingSync);
     syncButton.setAttribute('aria-selected', String(showingSync));
     connectionsButton.setAttribute('aria-selected', String(!showingSync));
+    const workspaceTitle = document.getElementById('workspace-title');
+    if (workspaceTitle) workspaceTitle.textContent = showingSync ? 'FileSync Workspace' : 'Connections & Peers';
 }
 
 // Build the two workspaces before attaching control behavior.
@@ -313,7 +259,7 @@ function renderSyncDestinations(devices: ListedDevice[]) {
     placeholder.value = '';
     placeholder.textContent = 'Select an online device';
     destinationSelect.appendChild(placeholder);
-    for (const device of devices.filter(device => device.online)) {
+    for (const device of devices.filter(device => device.online && device.id !== ownDeviceID)) {
         const option = document.createElement('option');
         option.value = device.id;
         option.textContent = `${device.name || 'Unknown device'} — ${listedDeviceAddress(device)}`;
@@ -326,6 +272,7 @@ function renderSyncDestinations(devices: ListedDevice[]) {
         destinationSelect.value = selectedDevice.id;
         selectedDeviceAddress = listedDeviceAddress(selectedDevice);
         destinationStatus.textContent = `Selected: ${selectedDevice.name || 'Unknown device'} (${selectedDeviceAddress})`;
+        renderPeerPicker(devices);
         return;
     }
 
@@ -336,6 +283,60 @@ function renderSyncDestinations(devices: ListedDevice[]) {
     destinationStatus.textContent = devices.some(device => device.online)
         ? 'No destination selected.'
         : 'No other online devices are available.';
+    renderPeerPicker(devices);
+}
+
+// renderPeerPicker keeps the polished peer menu and the hidden native select synchronized.
+function renderPeerPicker(devices: ListedDevice[]) {
+    const trigger = document.querySelector<HTMLButtonElement>('#peer-picker-trigger');
+    const popover = document.getElementById('peer-picker-popover');
+    if (!trigger || !popover) return;
+
+    // Show online peers other than this computer.
+    const peers = devices.filter(device => device.online && device.id !== ownDeviceID);
+    const chosen = peers.find(device => device.id === selectedDeviceID);
+    trigger.replaceChildren(document.createTextNode(chosen
+        ? `${chosen.name || 'Unknown device'} — ${listedDeviceAddress(chosen)}`
+        : 'Select an online device'), document.createTextNode('⌄'));
+    popover.replaceChildren();
+
+    // Explain why a destination cannot be selected.
+    if (peers.length === 0) {
+        const empty = document.createElement('p');
+        empty.className = 'muted-text';
+        empty.textContent = 'No online peers are available.';
+        popover.appendChild(empty);
+        return;
+    }
+
+    // Build accessible menu options from the coordinator's device list.
+    for (const device of peers) {
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'peer-option';
+        option.classList.toggle('is-selected', device.id === selectedDeviceID);
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', String(device.id === selectedDeviceID));
+        const dot = document.createElement('span');
+        dot.className = 'peer-dot';
+        const text = document.createElement('span');
+        const name = document.createElement('strong');
+        name.textContent = device.name || 'Unknown device';
+        const address = document.createElement('small');
+        address.textContent = `${listedDeviceAddress(device)}${device.coordinator ? ' · Coordinator' : ''}`;
+        text.append(name, address);
+        option.append(dot, text);
+        option.addEventListener('click', () => {
+            const nativeSelect = document.querySelector<HTMLSelectElement>('#sync-destination-select');
+            if (nativeSelect) {
+                nativeSelect.value = device.id;
+                nativeSelect.dispatchEvent(new Event('change'));
+            }
+            popover.hidden = true;
+            trigger.setAttribute('aria-expanded', 'false');
+        });
+        popover.appendChild(option);
+    }
 }
 
 // Rabindra Neupane
@@ -485,6 +486,25 @@ document.getElementById('sync-destination-select')?.addEventListener('change', e
     document.querySelectorAll<HTMLElement>('#connected-devices .device').forEach(deviceCard => {
         deviceCard.classList.toggle('selected-device', deviceCard.dataset.deviceId === selectedDeviceID);
     });
+    renderPeerPicker(latestRegisteredDevices);
+});
+
+// Open and close the custom destination menu without changing transfer behavior.
+document.getElementById('peer-picker-trigger')?.addEventListener('click', () => {
+    const trigger = document.querySelector<HTMLButtonElement>('#peer-picker-trigger');
+    const popover = document.getElementById('peer-picker-popover');
+    if (!trigger || !popover) return;
+    popover.hidden = !popover.hidden;
+    trigger.setAttribute('aria-expanded', String(!popover.hidden));
+});
+document.addEventListener('click', event => {
+    const picker = document.querySelector('.peer-picker');
+    const popover = document.getElementById('peer-picker-popover');
+    const trigger = document.querySelector<HTMLButtonElement>('#peer-picker-trigger');
+    if (picker && popover && trigger && !picker.contains(event.target as Node)) {
+        popover.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
+    }
 });
 
 // Rabindra Neupane
@@ -674,6 +694,18 @@ async function refreshRegistration() {
         ownDeviceName = status.deviceName;
         ownDeviceAddress = status.localAddress;
         ownDeviceIsCoordinator = status.coordinator;
+        // Show the same local identity in the persistent sidebar card.
+        const sidebarName = document.getElementById('sidebar-device-name');
+        const sidebarAddress = document.getElementById('sidebar-device-address');
+        const sidebarRole = document.getElementById('sidebar-role');
+        const connectionDot = document.getElementById('connection-tab-status');
+        if (sidebarName) sidebarName.textContent = status.deviceName || 'This device';
+        if (sidebarAddress) sidebarAddress.textContent = status.localAddress || 'Address unavailable';
+        if (sidebarRole) sidebarRole.textContent = status.coordinator ? 'Coordinator' : 'Client';
+        if (connectionDot) {
+            connectionDot.classList.toggle('status-online', status.registered);
+            connectionDot.classList.toggle('status-attention', !status.registered && status.configured);
+        }
         const mode = document.querySelector<HTMLInputElement>('#coordinator-mode');
         const clientMode = document.querySelector<HTMLInputElement>('#client-mode');
         const address = document.querySelector<HTMLInputElement>('#coordinator-address');
@@ -926,7 +958,9 @@ saveCoordinatorButton?.addEventListener('click', async () => {
 
 // Start a short single-use pairing window when requested by the coordinator.
 startPairingButton?.addEventListener('click', async () => {
+    const originalLabel = startPairingButton.textContent;
     startPairingButton.disabled = true;
+    startPairingButton.textContent = 'Creating code...';
     try {
         await StartCoordinatorPairing();
         await refreshPairingStatus();
@@ -937,14 +971,28 @@ startPairingButton?.addEventListener('click', async () => {
         if (pairingCountdown) pairingCountdown.textContent = friendlyConnectionError(error);
     } finally {
         startPairingButton.disabled = false;
+        startPairingButton.textContent = originalLabel;
     }
 });
 // Registered Devices goes back from the discovery list to the normal device list
-document.getElementById('registered-devices-button')?.addEventListener('click', () => {
+document.getElementById('registered-devices-button')?.addEventListener('click', async () => {
+    const refreshButton = document.querySelector<HTMLButtonElement>('#registered-devices-button');
+    const originalLabel = refreshButton?.textContent ?? 'Refresh';
+    if (refreshButton) {
+        refreshButton.disabled = true;
+        refreshButton.textContent = 'Refreshing...';
+    }
     showingDiscovery = false;
     const searchResults = document.getElementById('coordinator-search-results');
     if (searchResults) searchResults.replaceChildren();
-    void refreshRegistration();
+    try {
+        await refreshRegistration();
+    } finally {
+        if (refreshButton) {
+            refreshButton.disabled = false;
+            refreshButton.textContent = originalLabel;
+        }
+    }
 });
 
 // Rabindra Neupane
@@ -1081,6 +1129,27 @@ function updateFileSelection() {
         input.checked = selectedFileNames.has(input.value);
         input.closest('tr')?.classList.toggle('selected-file', input.checked);
     });
+    const count = document.getElementById('selected-file-count');
+    if (count) count.textContent = `${selectedFileNames.size} file${selectedFileNames.size === 1 ? '' : 's'} selected`;
+    const checkboxes = Array.from(document.querySelectorAll<HTMLInputElement>('#synced-file-list input[type="checkbox"]'));
+    const selectAll = document.querySelector<HTMLInputElement>('#select-all-files');
+    if (selectAll) {
+        selectAll.checked = checkboxes.length > 0 && checkboxes.every(input => input.checked);
+        selectAll.indeterminate = selectedFileNames.size > 0 && !selectAll.checked;
+    }
+}
+
+// formatFileSize displays file size in a compact, scan-friendly unit.
+function formatFileSize(size: number): string {
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// formatModifiedTime shows a local timestamp for the file list.
+function formatModifiedTime(value: string): string {
+    const time = new Date(value);
+    return Number.isNaN(time.getTime()) ? value : time.toLocaleString();
 }
 // Rabindra Neupane
 // Reads the Synced Files folder and redraws the table, but only when something actually changed
@@ -1104,8 +1173,8 @@ async function refreshSyncedFiles() {
             body.replaceChildren();
             for (const file of files) {
                 const row = document.createElement('tr');
+                const checkboxCell = document.createElement('td');
                 const nameCell = document.createElement('td');
-                const label = document.createElement('label');
                 // Named radio, but it's a checkbox so more than one file can be picked
                 const radio = document.createElement('input');
                 radio.type = 'checkbox';
@@ -1119,13 +1188,15 @@ async function refreshSyncedFiles() {
                     selectionSource = 'Synced Files';
                     updateFileSelection();
                 });
-                label.append(radio, document.createTextNode(` ${file.name}`));
-                nameCell.appendChild(label);
+                checkboxCell.appendChild(radio);
+                nameCell.textContent = file.name;
+                row.appendChild(checkboxCell);
                 row.appendChild(nameCell);
                 // Status, Size and Modified columns
-                for (const text of ['Available locally', `${file.size.toLocaleString()} bytes`, new Date(file.modified).toLocaleString()]) {
+                for (const text of ['Available locally', formatFileSize(file.size), formatModifiedTime(file.modified)]) {
                     const cell = document.createElement('td');
                     cell.textContent = text;
+                    if (text === 'Available locally') cell.className = 'file-status';
                     row.appendChild(cell);
                 }
                 body.appendChild(row);
@@ -1133,6 +1204,8 @@ async function refreshSyncedFiles() {
             sizeFileList();
             fileListSignature = signature;
         }
+        const emptyState = document.getElementById('file-empty-state');
+        if (emptyState) emptyState.hidden = files.length > 0;
         if (status) status.textContent = files.length ? `${files.length} file(s) available` : 'Synced Files is empty. Add a file from your computer.';
     } catch (error) {
         if (status) status.textContent = `Cannot load Synced Files: ${error}`;
@@ -1141,10 +1214,12 @@ async function refreshSyncedFiles() {
     }
 }
 
-//Rabindra Neupane
-// "Add files from computer" button. The added files get selected right away so they can be synced.
-selectFileButton?.addEventListener('click', async () => {
-    selectFileButton.disabled = true;
+// addFilesToWorkspace opens the native picker and selects the newly staged files.
+async function addFilesToWorkspace(clickedButton = selectFileButton) {
+    if (!clickedButton) return;
+    const originalLabel = clickedButton.textContent;
+    clickedButton.disabled = true;
+    clickedButton.textContent = 'Adding...';
     try {
         const result = await AddFiles();
         await refreshSyncedFiles();
@@ -1158,8 +1233,22 @@ selectFileButton?.addEventListener('click', async () => {
     } catch (error) {
         if (recentFileActivity) recentFileActivity.textContent = `Cannot add file: ${error}`;
     } finally {
-        selectFileButton.disabled = false;
+        clickedButton.disabled = false;
+        clickedButton.textContent = originalLabel;
     }
+}
+selectFileButton?.addEventListener('click', () => { void addFilesToWorkspace(); });
+document.getElementById('empty-add-files')?.addEventListener('click', event => {
+    void addFilesToWorkspace(event.currentTarget as HTMLButtonElement);
+});
+document.getElementById('select-all-files')?.addEventListener('change', event => {
+    const checked = (event.currentTarget as HTMLInputElement).checked;
+    document.querySelectorAll<HTMLInputElement>('#synced-file-list input[type="checkbox"]').forEach(input => {
+        if (checked) selectedFileNames.add(input.value);
+        else selectedFileNames.delete(input.value);
+    });
+    selectionSource = 'Synced Files';
+    updateFileSelection();
 });
 
 //Rabindra Neupane

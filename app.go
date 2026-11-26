@@ -196,6 +196,10 @@ func (app *App) prepareFileForSync(fileName string) ([]Chunk, network.FileMetada
 		return nil, metadata, fmt.Errorf("record local file version: %w", versionRecordingError)
 	}
 	metadata, metadataBuildingError := app.metadataForSync(fileName, chunks)
+	if metadataBuildingError == nil {
+		// Report the verified local cache so peers can locate these chunks later.
+		app.scheduleLocalChunkInventoryReport()
+	}
 	return chunks, metadata, metadataBuildingError
 }
 
@@ -361,7 +365,7 @@ func (app *App) startup(ctx context.Context) {
 
 	// Start the local HTTP Server
 	// Reconstruction implementation: Nisham Karki
-	go network.StartServer(serviceCtx, "8080", app.completeIncomingTransfer, app.deviceRegistry)
+	go network.StartServer(serviceCtx, "8080", app.completeIncomingTransfer, app.deviceRegistry, app.scheduleLocalChunkInventoryReport)
 }
 
 // Rabindra Neupane

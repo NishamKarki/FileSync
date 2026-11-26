@@ -18,7 +18,7 @@ import (
 // Rabindra Neupane
 // NewWholeFileSendHandler receives a complete file for performance comparison.
 // Normal FileSync synchronization uses the incremental chunk-transfer handler.
-func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error) http.Handler {
+func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error, transferAccepted func()) http.Handler {
 	// Create the benchmark endpoint without sharing incremental transfer state.
 	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 		// Validate that whole-file uploads use POST.
@@ -189,6 +189,11 @@ func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error
 		if verifiedChunkCachingError := cacheVerifiedTransfer(root, transferRoot, metadata); verifiedChunkCachingError != nil {
 			http.Error(responseWriter, fmt.Sprintf("Cache verified chunks: %v", verifiedChunkCachingError), 500)
 			return
+		}
+
+		// Report the accepted cache after every verified benchmark transfer.
+		if transferAccepted != nil {
+			go transferAccepted()
 		}
 
 		// Respond with the verified file hash after the transfer completes.

@@ -112,8 +112,20 @@ function closeConflictPanel() {
 function updateConflictsButton(openCount: number) {
     // Stop when the main conflict button is unavailable.
     if (!conflictsButton) return;
-    // Show the open count and highlight the button when work is waiting.
-    conflictsButton.textContent = openCount > 0 ? `Conflicts (${openCount})` : 'Conflicts';
+    // Keep the sidebar icon and add a compact live count badge when needed.
+    conflictsButton.replaceChildren();
+    const icon = document.createElement('span');
+    icon.className = 'nav-icon';
+    icon.textContent = '△';
+    const label = document.createElement('span');
+    label.textContent = 'Conflicts';
+    conflictsButton.append(icon, label);
+    if (openCount > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'conflict-count-badge';
+        badge.textContent = String(openCount);
+        conflictsButton.appendChild(badge);
+    }
     conflictsButton.classList.toggle('has-conflicts', openCount > 0);
 }
 

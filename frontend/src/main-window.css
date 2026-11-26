@@ -1,568 +1,67 @@
-/* Main FileSync window
-   Basic look used across the whole app */
-
-html,
-body {
-    /* Almost the full window width, with a small gap on each side */
-    width: 99%;
-    margin-left: 5px;
-    margin-right: 5px;
-
-    background: #181818;
-    color: #f1f1f1;
-
-    font-family: "Segoe UI", Arial, sans-serif;
+/* Native-feeling click feedback for every primary desktop interaction. */
+button, .dashboard-tab, .role-card, .device {
+    user-select: none;
+    transition: transform 90ms cubic-bezier(0.2, 0, 0, 1), background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
 }
-
-/* Header with the FileSync title */
-.title {
-    padding: 18px 26px;
-    border-bottom: 1px solid #444;
+button:hover:not(:disabled), .dashboard-tab:hover:not(:disabled), .role-card:hover:not(:has(input:disabled)), .device:hover:not(:disabled) {
+    border-color: rgba(255, 255, 255, 0.22);
+    box-shadow: 0 3px 9px rgba(0, 0, 0, 0.16);
 }
-
-.title h1 {
-    /* Headings come with a default margin, we don't want it here */
-    margin: 0;
-
-    font-size: 20px;
+button:active:not(:disabled), .dashboard-tab:active:not(:disabled), .role-card:active:not(:has(input:disabled)), .device:active:not(:disabled) {
+    transform: translateY(1px) scale(0.985);
+    background-color: #14171f;
+    border-color: rgba(255, 255, 255, 0.22);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.35);
 }
-
-/* Main navigation separates file syncing from connection setup. */
-.dashboard-tabs {
-    display: flex;
-    gap: 4px;
-    padding: 10px 26px 0;
-    border-bottom: 1px solid #444;
-}
-
-.dashboard-tab {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    border-bottom: 3px solid transparent;
-    background: #292929;
-}
-
-.dashboard-tab.active-tab {
-    border-bottom-color: #8bbcff;
-    background: #3a3a3a;
-}
-
-.tab-status-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #999;
-}
-
-.tab-status-dot.connected {
-    background: #55c878;
-}
-
-.tab-status-dot.attention {
-    background: #e6a64a;
-}
-
-.app-tab-panel[hidden] {
-    display: none;
-}
-
-.connection-banner {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 14px;
-    margin: 16px 26px 0;
-    padding: 12px 14px;
-    border: 1px solid #d19a48;
-    background: #382d1b;
-}
-
-.connection-banner[hidden] {
-    display: none;
-}
-
-/* Destination card keeps the sync target prominent and easy to change. */
-.sync-destination-section {
-    display: grid;
-    grid-template-columns: minmax(190px, 0.7fr) minmax(280px, 1.3fr);
-    gap: 24px;
-    align-items: center;
-    margin: 18px 26px;
-    padding: 18px 20px;
-    border: 1px solid #555;
-    background: #202020;
-}
-
-.destination-heading h2,
-.destination-heading p,
-.destination-status {
-    margin: 0;
-}
-
-.destination-heading p {
-    margin-top: 5px;
-    color: #c5c5c5;
-    font-size: 0.88rem;
-}
-
-.destination-controls {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 7px 12px;
-    align-items: center;
-}
-
-.destination-controls label {
-    font-weight: 700;
-}
-
-#sync-destination-select {
-    width: 100%;
-    min-width: 0;
-    padding: 11px 38px 11px 12px;
-    border: 1px solid #aaa;
-    background: #f4f4f4;
-    color: #181818;
-    font: inherit;
-    cursor: pointer;
-}
-
-#sync-destination-select:focus-visible {
-    outline: 3px solid #8bbcff;
+button:focus-visible, .dashboard-tab:focus-visible, .role-card:focus-within, .device:focus-visible {
+    outline: 2px solid #818cf8;
     outline-offset: 2px;
 }
-
-.destination-status {
-    grid-column: 2;
-    min-height: 1.25em;
-    color: #c5c5c5;
-    font-size: 0.84rem;
-    overflow-wrap: anywhere;
+.add-files-button, .sync-primary {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 2px 6px rgba(99,102,241,.25);
+}
+.add-files-button:hover:not(:disabled), .sync-primary:hover:not(:disabled) { background: #5558e6; }
+.add-files-button:active:not(:disabled), .sync-primary:active:not(:disabled) {
+    transform: translateY(1.5px) scale(.98);
+    background: #4346c7;
+    box-shadow: inset 0 2px 5px rgba(0,0,0,.4);
 }
 
-/* File selection area: selected files on the left, Add files button on the right */
-.select-file-to-sync {
-    border-bottom: 1px solid #444;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-/* Default look for every button in the app */
-button {
-    padding: 9px 16px;
-
-    background: #646464;
-    color: #ffffff;
-
-    border: 1px solid;
-
-    /* Almost square corners */
-    border-radius: 1px;
-
-    cursor: pointer;
-}
-
-button:hover {
-    background: #3a3a3a;
-}
-
-/* Same inside spacing for the lower panels */
-.section {
-    padding: 20px 26px;
-}
-
-.section h2 {
-    font-size: 20px;
-    margin: 0 0 15px 0;
-}
-
-/* File list */
-.file-details {
-    border-bottom: 1px solid #444;
-}
-
-.file-table {
-    margin: 0 0 10px 0;
-    width: 100%;
-}
-
-/* Name, Status, Size and Modified headings, lined up with the rows below */
-.file-table th {
-    padding: 10px 8px;
-
-    color: #aaa;
-
-    text-align: left;
-    border-bottom: 1px solid #555;
-}
-
-.file-table td {
-    padding: 12px 8px;
-    font-size: 14px;
-}
-
-/* Connections uses the full width because Recent Activity lives on Sync Dashboard. */
-#connections-panel .devices {
-    max-width: 980px;
-    margin: 0 auto;
-    border-right: 0;
-}
-
-#sync-dashboard-panel .activity {
-    border-top: 1px solid #444;
-    min-height: 150px;
-}
-
-/* One device in the Connected Devices list */
-.device {
-    margin: 13px 0;
-    gap: 6px;
-
-    /* Devices can be clicked to select them */
-    cursor: pointer;
-
-    display: grid;
-
-    padding: 14px 16px;
-
-    align-items: start;
-}
-
-/* Outline around the device that's currently picked */
-.device.selected-device {
-    border: 2px solid;
-    border-radius: 6px;
-}
-
-/* Keep registration controls in one clear vertical workflow. */
-.connection-panel {
-    display: grid;
-    gap: 14px;
-    margin-bottom: 20px;
-}
-
-/* Keep the Coordinator and Client choices together and easy to scan. */
-.role-options {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-    padding: 14px;
-    border: 1px solid #555;
-}
-
-.role-card {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 12px;
-    border: 1px solid #444;
-    cursor: pointer;
-}
-
-.role-card:has(input:checked) {
-    border-color: #8bbcff;
-    background: #263442;
-}
-
-.role-card span,
-.role-card small {
-    display: block;
-}
-
-.role-card small {
-    margin-top: 4px;
-    color: #c5c5c5;
-    line-height: 1.35;
-}
-
-/* Group the controls used by each connection role. */
-#client-connection-controls,
-#coordinator-pairing-controls {
-    display: grid;
-    gap: 12px;
-    padding: 16px;
-    border: 1px solid #444;
-}
-
-.setup-heading h3,
-.setup-heading p,
-.registered-devices-heading h3,
-.registered-devices-heading p,
-.connection-summary h3 {
-    margin: 0;
-}
-
-.setup-heading p,
-.registered-devices-heading p {
-    margin-top: 4px;
-    color: #c5c5c5;
-    font-size: 0.85rem;
-}
-
-.field-group {
-    display: grid;
-    gap: 6px;
-}
-
-/* Hidden role groups must stay hidden even though they normally use grid. */
-#client-connection-controls[hidden],
-#coordinator-pairing-controls[hidden] {
-    display: none;
-}
-
-.connection-guidance {
-    margin: 0;
-    color: #c5c5c5;
-    font-size: 0.82rem;
-}
-
-/* Show discovered coordinators directly below the Find Coordinator button. */
-#coordinator-search-results:not(:empty) {
-    display: grid;
-    gap: 8px;
-    margin-top: 4px;
-}
-/* The text box only, not the checkbox. min-width 0 stops it from overflowing the panel */
-.connection-panel input:not([type="checkbox"]):not([type="radio"]) {
-    padding: 10px;
-    min-width: 0;
-}
-
-#pairing-code {
-    font-size: 1.35rem;
-    font-weight: 700;
-    letter-spacing: 0.3em;
-    text-align: center;
-}
-
-.primary-action,
-.secondary-action {
-    width: 100%;
-}
-
-.connection-summary {
-    display: grid;
-    gap: 8px;
-    padding: 16px;
-    border: 1px solid #444;
-    background: #202020;
-}
-
-.registered-devices-section {
-    display: grid;
-    gap: 12px;
-    padding-top: 18px;
-    border-top: 1px solid #444;
-}
-
-.registered-devices-heading {
-    display: flex;
-    justify-content: space-between;
-    align-items: end;
-    gap: 14px;
-}
-
-.registered-devices-heading .secondary-action {
-    width: auto;
-}
-/* Registration status can contain long IDs and addresses, so let it wrap */
-#registration-status {
-    overflow-wrap: anywhere;
-    font-size: 0.85rem;
-}
-
-/* Put optional diagnostic text below the friendly connection message. */
-#connection-help {
-    overflow-wrap: anywhere;
-    font-size: 0.8rem;
-}
-
-#connection-help summary {
-    cursor: pointer;
-}
-
-#connection-help pre {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-}
-
-/* Pairing status shows the temporary code without stretching the device panel. */
-#pairing-status {
-    overflow-wrap: anywhere;
-}
-
-.pairing-code-card {
-    display: grid;
-    gap: 6px;
-    padding: 18px;
-    text-align: center;
-    border: 1px solid #666;
-    background: #242424;
-}
-
-#pairing-code-display {
-    font-size: 2rem;
-    font-weight: 800;
-    letter-spacing: 0.18em;
-}
-
-#pairing-countdown {
-    color: #c5c5c5;
-}
-
-.pairing-lockout {
-    display: grid;
-    gap: 4px;
-    padding: 12px;
-    border: 1px solid #d26a6a;
-    background: #3a2020;
-}
-
-.pairing-lockout[hidden] {
-    display: none;
-}
-
-/* Keep each registered device and its revoke action together. */
-.device-entry {
-    display: grid;
-    gap: 6px;
-    margin-bottom: 10px;
-}
-
-/* Make credential revocation visually separate from selecting a sync target. */
-.remove-device-button {
-    justify-self: end;
-    padding: 6px 10px;
-}
-
-/* Registration info shown as label / value rows */
-.registration-details {
-    display: grid;
-    gap: 6px;
-    margin-top: 8px;
-}
-
-/* Fixed 110px column for the label, the value takes the rest */
-.registration-detail-row {
-    display: grid;
-    grid-template-columns: 110px minmax(0, 1fr);
-    column-gap: 12px;
-    align-items: start;
-}
-
-.registration-detail-label {
-    font-weight: 700;
-}
-
-.registration-detail-value {
-    min-width: 0;
-    overflow-wrap: anywhere;
-}
-/* Each device is a button. pre-line keeps the line breaks between name, ID and address.
-   Offline devices are disabled and faded. */
-button.device { width: 100%; text-align: left; white-space: pre-line; overflow-wrap: anywhere; }
-button.device:disabled { opacity: 0.55; cursor: default; }
-
-/* Keeps each activity on its own line */
-#recent-activity {
-    white-space: pre-line;
-}
-
-/* Bottom bar: Sync Now on the left, Conflicts and Settings on the right */
-.footer {
-    padding: 15px 26px;
-    border-top: 1px solid #444;
-    display: flex;
-    justify-content: space-between;
-}
-
-/* Conflicts and Settings next to each other */
-.footer div {
-    display: flex;
-    gap: 10px;
-}
-
-/* Lets the footer buttons wrap onto a second line when the window is narrow */
-.footer { gap: 12px; flex-wrap: wrap; align-items: flex-start; }
-/* "Transfer diagnostics" dropdown with the Send Whole File button */
-.transfer-diagnostics summary { cursor: pointer; padding: 9px 0; }
-.transfer-diagnostics > div { flex-wrap: wrap; margin-top: 8px; }
-/* Highlight for the rows that are checked in the file list */
-.file-table .selected-file { background: #303b48; }
-/* Checkbox and file name in one row, the whole row is clickable */
-.file-table label { display: flex; align-items: center; gap: 8px; cursor: pointer; overflow-wrap: anywhere; }
-.file-table input[type="checkbox"] { flex-shrink: 0; }
-/* Long paths wrap instead of stretching the window */
-.file-path, #file-list-status { overflow-wrap: anywhere; }
-.select-file-to-sync > div > p { max-width: 42rem; }
-
-/* File list scrolls by itself after 340px, so a long list doesn't push everything down */
-.file-table-scroll {
-    max-height: 340px;
-    overflow: auto;
-    scrollbar-gutter: stable;
-    scrollbar-color: #858585 #232323;
-    margin-bottom: 16px;
-}
-.file-table-scroll .file-table { margin-bottom: 0; border-collapse: collapse; }
-/* Headings stay at the top while scrolling */
-.file-table-scroll th {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: #191919;
-}
-/* Blue outline when the list is focused with the keyboard */
-.file-table-scroll:focus-visible { outline: 2px solid #8bbcff; outline-offset: 2px; }
-/* Dark scrollbar so it matches the rest of the window (WebView2 on Windows) */
-.file-table-scroll::-webkit-scrollbar { width: 14px; height: 14px; }
-.file-table-scroll::-webkit-scrollbar-track { background: #232323; }
-.file-table-scroll::-webkit-scrollbar-thumb { background: #858585; border: 3px solid #232323; border-radius: 8px; }
-.file-table-scroll::-webkit-scrollbar-thumb:hover { background: #aaa; }
-
-/* Stack wide panels when the window is too narrow for two readable columns. */
-@media (max-width: 850px) {
-    .role-options {
-        grid-template-columns: 1fr;
-    }
-
-    .registered-devices-heading {
-        align-items: stretch;
-        flex-direction: column;
-    }
-
-    .registered-devices-heading .secondary-action {
-        width: 100%;
-    }
-
-    .dashboard-tabs {
-        padding-inline: 12px;
-    }
-
-    .dashboard-tab {
-        flex: 1;
-        justify-content: center;
-    }
-
-    .connection-banner {
-        align-items: stretch;
-        flex-direction: column;
-        margin-inline: 12px;
-    }
-
-    .sync-destination-section {
-        grid-template-columns: 1fr;
-        gap: 14px;
-        margin-inline: 12px;
-    }
-
-    .destination-controls {
-        grid-template-columns: 1fr;
-    }
-
-    .destination-status {
-        grid-column: 1;
-    }
-}
+/* Compact alignment pass for the desktop workspace. */
+.workspace-header { padding-block: 0; }
+.select-file-to-sync { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(220px,.8fr); align-items:center; }
+.select-file-to-sync .add-files-button { justify-self:center; }
+.sync-folder-hint { text-align:right; line-height:1.4; }
+#file-list-status { min-height:18px; margin:0; padding:9px 14px 0; color:#929baa; font-size:12px; }
+.file-table th:nth-child(3),.file-table td:nth-child(3) { width:145px; }
+.file-table th:nth-child(4),.file-table td:nth-child(4) { width:96px; text-align:right; }
+.file-table th:nth-child(5),.file-table td:nth-child(5) { width:190px; }
+.file-table td:nth-child(2) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sync-destination-section { grid-template-columns:minmax(150px,.7fr) minmax(285px,1.4fr) auto; }
+.transfer-actions { justify-content:flex-end; white-space:nowrap; }
+.connection-panel { align-items:start; }
+#save-coordinator-button { align-self:start; min-height:42px; }
+.setup-card,.connection-summary,.registered-devices-section { box-shadow:0 1px 0 rgba(255,255,255,.03) inset; }
+.connection-summary #registration-status { display:grid; gap:7px; margin-top:12px; }
+.registered-devices-heading { margin-bottom:14px; }
+.device-entry { display:flow-root; }
+.device { line-height:1.45; }
+.remove-device-button { min-width:122px; }
+#start-pairing-button,.secondary-action,.transfer-diagnostics button,.peer-picker-trigger { background:#1c2029; color:#f3f4f6; border:1px solid rgba(255,255,255,.14); border-radius:8px; }
+#start-pairing-button { width:100%; padding:10px 12px; }
+.pairing-code-card { padding:9px 12px; }
+.pairing-code-card strong { font-size:19px; letter-spacing:.08em; }
+.pairing-code-card span { line-height:1.35; }
+.nav-icon { display:inline-block; flex:0 0 16px; width:16px; height:16px; color:currentColor; }
+.dashboard-tab .nav-icon path,.dashboard-tab .nav-icon circle { fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+@media(max-width:780px){.select-file-to-sync{display:flex;align-items:flex-start}.sync-folder-hint{text-align:left}.file-table th:nth-child(5),.file-table td:nth-child(5){display:none}}
+
+:root { color:#f3f4f6; background:#0b0d10; font-family:Inter,"Segoe UI",sans-serif; }
+* { box-sizing:border-box; } html,body,#app { width:100%;height:100%;margin:0;overflow:hidden; } body { background:#0b0d10;color:#f3f4f6; } button,input,select { font:inherit; } button { cursor:pointer; } button:disabled { opacity:.55;cursor:not-allowed; }
+.app-shell { display:grid;grid-template-columns:230px minmax(0,1fr);height:100vh;overflow:hidden; }.sidebar { display:flex;flex-direction:column;gap:24px;padding:22px 14px 16px;border-right:1px solid rgba(255,255,255,.08);background:#101217; }.brand { display:flex;align-items:center;gap:10px;padding:5px 8px; }.brand-mark { display:grid;place-items:center;width:31px;height:31px;border-radius:9px;background:#6366f1;color:#fff;font-size:18px;font-weight:800; }.brand strong,.brand span { display:block; }.brand span:not(.brand-mark) { margin-top:2px;color:#949ba8;font-size:11px; }
+.dashboard-tabs { display:grid;gap:5px; }.dashboard-tab,.sidebar-conflicts { position:relative;display:flex;align-items:center;gap:10px;width:100%;padding:10px 11px;border:0;border-radius:8px;color:#aeb5c1;background:transparent;text-align:left;font-size:13px;font-weight:600; }.dashboard-tab:hover,.sidebar-conflicts:hover { color:#f3f4f6;background:rgba(255,255,255,.05); }.dashboard-tab.active-tab { color:#fff;background:rgba(99,102,241,.19); }.nav-icon { width:18px;text-align:center;color:#a5b4fc; }.tab-status-dot { width:7px;height:7px;margin-left:auto;border-radius:50%;background:#68707e; }.tab-status-dot.status-online { background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.12); }.tab-status-dot.status-attention { background:#f59e0b; }.conflict-count-badge { margin-left:auto;min-width:20px;padding:2px 6px;border-radius:999px;background:rgba(245,158,11,.2);color:#fbbf24;font-size:11px;text-align:center; }.local-node-card { margin-top:auto;padding:12px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:#13161c; }.local-node-card>* { display:block; }.local-node-label { color:#818897;font-size:10px;font-weight:700;letter-spacing:.1em; }.local-node-card strong { margin-top:7px;font-size:13px; }.local-node-card>#sidebar-device-address { margin-top:3px;color:#aeb5c1;font-size:11px; }.role-badge { display:inline-block!important;width:max-content;margin-top:9px;padding:3px 7px;border-radius:99px;color:#c7d2fe;background:rgba(99,102,241,.17);font-size:10px;font-weight:700; }
+.workspace-shell { min-width:0;overflow-y:auto; }.workspace-header { position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;min-height:70px;padding:0 34px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(11,13,16,.92);backdrop-filter:blur(16px); }.workspace-header h1 { margin:0;font-size:18px; }.workspace-header p { margin:4px 0 0;color:#98a1af;font-size:12px; }.folder-dot,.peer-dot { display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;background:#10b981; }.add-files-button,.sync-primary,.secondary-action,.primary-action { border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:9px 13px;color:#f3f4f6;background:#242832;font-weight:650; }.add-files-button,.sync-primary,.primary-action { border-color:#6366f1;background:#6366f1; }.app-tab-panel { max-width:1320px;margin:auto;padding:26px 34px 32px; }.connection-banner { display:flex;align-items:center;justify-content:space-between;gap:15px;margin:0 0 20px;padding:10px 13px;border:1px solid rgba(245,158,11,.24);border-radius:8px;color:#fcd34d;background:rgba(245,158,11,.09);font-size:13px; }.connection-banner button { border:0;color:#fcd34d;background:transparent;text-decoration:underline; }
+.select-file-to-sync { display:flex;justify-content:space-between;gap:20px;margin-bottom:18px; }.select-file-to-sync h2 { margin:0 0 5px;font-size:19px; }.file-path,.sync-folder-hint { margin:0;color:#969eab;font-size:13px; }.file-details { overflow:hidden;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:#13161c; }.file-table-scroll { overflow:auto; }.file-table { width:100%;border-collapse:collapse; }.file-table th { padding:12px 14px;color:#8f97a5;border-bottom:1px solid rgba(255,255,255,.08);font-size:11px;letter-spacing:.07em;text-align:left;text-transform:uppercase; }.file-table td { padding:13px 14px;border-bottom:1px solid rgba(255,255,255,.06);color:#e5e7eb;font-size:13px; }.file-table td:first-child,.file-table th:first-child { width:42px;text-align:center; }.file-table td:nth-child(4),.file-table td:nth-child(5) { color:#aeb5c1;font-variant-numeric:tabular-nums; }.file-status { color:#6ee7b7!important;font-size:11px;font-weight:700; }.file-empty-state { display:grid;place-items:center;min-height:230px;padding:30px;color:#8d96a5;text-align:center; }.file-empty-state h3 { margin:6px 0;color:#e5e7eb; }.file-empty-state p { margin:0; }.file-empty-state button { margin-top:12px;border:0;color:#a5b4fc;background:transparent;text-decoration:underline; }
+.sync-destination-section { position:sticky;bottom:0;z-index:3;display:grid;grid-template-columns:1fr 1.4fr auto;gap:14px;align-items:center;margin-top:20px;padding:13px 15px;border:1px solid rgba(255,255,255,.1);border-radius:11px;background:rgba(19,22,28,.96);box-shadow:0 -9px 35px rgba(0,0,0,.2);backdrop-filter:blur(18px); }.destination-heading p { margin:3px 0 0;color:#9aa2ae;font-size:11px; }.selection-pill { color:#c7d2fe; }.destination-controls { display:flex;align-items:center;gap:9px;font-size:12px; }.destination-controls>label { color:#aeb5c1; }.peer-picker { position:relative;flex:1; }.peer-picker-trigger { display:flex;justify-content:space-between;align-items:center;width:100%;min-height:39px;padding:8px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#e5e7eb;background:#0e1015;text-align:left; }.peer-picker-popover { position:absolute;right:0;bottom:calc(100% + 8px);z-index:10;width:100%;max-height:250px;overflow:auto;padding:5px;border:1px solid rgba(255,255,255,.12);border-radius:9px;background:#1a1d24;box-shadow:0 15px 36px rgba(0,0,0,.42); }.peer-option { display:flex;width:100%;align-items:center;gap:8px;padding:9px;border:0;border-radius:6px;color:#e5e7eb;background:transparent;text-align:left; }.peer-option:hover,.peer-option.is-selected { background:rgba(99,102,241,.16); }.peer-option small { display:block;margin-top:2px;color:#98a1af; }.transfer-actions { display:flex;align-items:center;gap:8px; }.transfer-diagnostics { position:relative; }.transfer-diagnostics summary { color:#9ba3b0;cursor:pointer;font-size:12px;list-style:none; }.transfer-diagnostics button { position:absolute;right:0;bottom:calc(100% + 9px);width:max-content;white-space:nowrap;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:9px 13px;color:#f3f4f6;background:#242832; }
+.section.activity,.setup-card,.connection-summary,.registered-devices-section { padding:17px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:#13161c; }.section.activity { margin-top:24px; }.activity-heading,.registered-devices-heading { display:flex;align-items:center;justify-content:space-between;gap:12px; }.activity-heading h2 { margin:0 0 8px;font-size:13px; }.activity-pulse { color:#6ee7b7;font-size:11px; }.activity>p { margin:0;color:#c4c9d2;white-space:pre-line;font-size:13px;line-height:1.55; }.connections-heading h2 { margin:0 0 5px;font-size:20px; }.connections-heading p { margin:0;color:#99a1ad;font-size:13px; }.connection-panel { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px; }.role-options { grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0;padding:14px;border:1px solid rgba(255,255,255,.08);border-radius:10px; }.role-options legend { padding:0 6px;color:#e5e7eb;font-size:13px;font-weight:700; }.role-card { display:flex;gap:8px;padding:10px;border:1px solid rgba(255,255,255,.08);border-radius:7px; }.role-card small { display:block;margin-top:3px;color:#98a1af;font-size:11px; }.setup-heading h3,.connection-summary h3,.registered-devices-heading h3 { margin:0 0 5px; }.setup-heading p,.registered-devices-heading p { margin:0 0 14px;color:#98a1af;font-size:12px; }.field-group label { display:block;color:#a4acb9;font-size:12px; }.field-group input { width:100%;margin:7px 0 10px;padding:10px;border:1px solid rgba(255,255,255,.12);border-radius:7px;outline:0;color:#f3f4f6;background:#0d0f14; }.connection-summary { grid-column:1/-1; }.pairing-code-card { margin-top:12px;padding:12px;border:1px solid rgba(245,158,11,.2);border-radius:8px;background:rgba(245,158,11,.06);text-align:center; }.pairing-code-card strong { display:block;color:#fcd34d;font-size:25px;letter-spacing:.14em; }.pairing-code-card span { display:block;margin-top:5px;color:#c7cbd3;font-size:12px; }.registered-devices-section { margin-top:16px; }.device-entry { margin-top:12px; }.device { width:100%;padding:13px;border:1px solid rgba(255,255,255,.09);border-radius:8px;color:#e5e7eb;background:#181b21;text-align:left; }.device.selected-device { border-color:#6366f1;background:rgba(99,102,241,.11); }.registration-detail-row { display:grid;grid-template-columns:115px 1fr;gap:10px;padding:3px 0;font-size:12px; }.registration-detail-label { color:#aeb5c1;font-weight:700; }.registration-detail-value { overflow-wrap:anywhere; }.remove-device-button { float:right;margin:8px 0 0;border:0;color:#fecaca;background:transparent; }.pairing-lockout { color:#fbbf24;font-size:12px; }.coordinator-search-results { margin-top:10px;color:#aeb5c1;font-size:12px; }.visually-hidden { position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important; }
+@media(max-width:780px){.app-shell{grid-template-columns:64px minmax(0,1fr)}.sidebar{padding:16px 8px}.brand>div,.dashboard-tab:not(.active-tab)::after,.local-node-card{display:none}.dashboard-tab,.sidebar-conflicts{justify-content:center}.tab-status-dot,.conflict-count-badge{position:absolute;right:7px;top:7px}.workspace-header,.app-tab-panel{padding-left:18px;padding-right:18px}.connection-panel,.role-options,.sync-destination-section{grid-template-columns:1fr}.role-options,.connection-summary{grid-column:auto}.select-file-to-sync{display:block}.sync-folder-hint{margin-top:9px}.destination-controls{display:block}.destination-controls label{display:block;margin-bottom:6px}.transfer-actions{justify-content:space-between}}

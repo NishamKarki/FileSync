@@ -191,6 +191,9 @@ func (app *App) applyIncomingTransfer(metadata network.FileMetadata, chunkRoot s
 	}
 	// Mark the accepted hash so the watcher ignores the resulting disk event.
 	app.remoteFileHashes[filepath.Clean(destination)] = metadata.FileHash
+	// Report the accepted cache so another peer can retrieve this verified copy.
+	// The report runs asynchronously and never turns a completed local apply into a failure.
+	app.scheduleLocalChunkInventoryReport()
 	// Log the verified receiver result for manual testing.
 	fmt.Printf("Received and verified %s in Synced Files (sender version %d; recorded with receiver's local sequence)\n", metadata.FileName, metadata.Version)
 	// Return success after file and metadata updates both complete.

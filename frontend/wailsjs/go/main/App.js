@@ -18,6 +18,10 @@ export function DiscoverDevices() {
   return window['go']['main']['App']['DiscoverDevices']();
 }
 
+export function FetchMissingChunkFromPeers(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['FetchMissingChunkFromPeers'](arg1, arg2, arg3, arg4);
+}
+
 export function FileWatcher(arg1) {
   return window['go']['main']['App']['FileWatcher'](arg1);
 }
