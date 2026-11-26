@@ -9,9 +9,8 @@ import (
 	"os"
 )
 
-// Initial fixed size chunk set to 1 KB (1024)
-// Use 64 KiB chunks so large files do not require thousands of HTTP requests.
-const chunkSize = 64 * 1024
+// Use 4 KiB chunks so small edits transfer less data while large files remain practical.
+const chunkSize = 4 * 1024
 
 // Chunk that represents a fixed size chunk
 type Chunk struct {
