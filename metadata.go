@@ -20,6 +20,20 @@ func InitDatabase(syncFolderPath string) (*sql.DB, error) {
 	if databaseOpenError != nil {
 		return nil, databaseOpenError
 	}
+	// Serialize this application's SQLite work so inventory writes and sync-base
+	// updates wait for each other instead of competing for separate writer locks.
+	database.SetMaxOpenConns(1)
+	database.SetMaxIdleConns(1)
+
+	// Let SQLite wait briefly for a writer and allow readers during a writer.
+	if _, busyTimeoutSettingError := database.Exec("PRAGMA busy_timeout = 10000"); busyTimeoutSettingError != nil {
+		database.Close()
+		return nil, busyTimeoutSettingError
+	}
+	if _, journalModeSettingError := database.Exec("PRAGMA journal_mode = WAL"); journalModeSettingError != nil {
+		database.Close()
+		return nil, journalModeSettingError
+	}
 
 	// Check that the connection actually works
 	pingError := database.Ping()
