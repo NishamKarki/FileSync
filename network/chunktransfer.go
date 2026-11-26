@@ -23,6 +23,7 @@ import (
 type incomingTransfer struct {
 	metadata     FileMetadata
 	root         string
+	reusedChunks []bool
 	completed    bool
 	conflictFile string
 	keepLocal    bool
@@ -134,11 +135,12 @@ func (receiver *transferReceiver) start(responseWriter http.ResponseWriter, requ
 	}
 	// Create the list of chunks that the sender must upload.
 	needed := make([]int, 0)
+	reusedChunks := make([]bool, len(metadata.ChunkHashes))
 	// Verify each cached chunk before deciding whether it can be reused.
 	for index := range metadata.ChunkHashes {
 		name := fmt.Sprintf("chunk_%d.chunk", index)
 		// Read cached bytes only when their size and hash match this file version.
-		chunkData, storedChunkReadingError := readVerifiedChunk(filepath.Join(receiver.projectRoot, "File Chunks", metadata.FileName, name), metadata, index)
+		_, storedChunkReadingError := readVerifiedChunk(filepath.Join(receiver.projectRoot, "File Chunks", metadata.FileName, name), metadata, index)
 		// Request a missing or changed cached chunk from the sender.
 		if os.IsNotExist(storedChunkReadingError) || storedChunkReadingError == errChunkMismatch {
 			needed = append(needed, index)
@@ -149,14 +151,11 @@ func (receiver *transferReceiver) start(responseWriter http.ResponseWriter, requ
 			http.Error(responseWriter, "Cannot read cached chunk", 500)
 			return
 		}
-		// Copy a verified cached chunk into this isolated transfer folder.
-		if stagedChunkWritingError := os.WriteFile(filepath.Join(folder, name), chunkData, 0644); stagedChunkWritingError != nil {
-			http.Error(responseWriter, "Cannot stage cached chunk", 500)
-			return
-		}
+		// Remember verified cached data without copying it during transfer startup.
+		reusedChunks[index] = true
 	}
 	// Save the active transfer and respond with only the required indexes.
-	receiver.transfers[transferID] = &incomingTransfer{metadata: metadata, root: root, expires: time.Now().Add(time.Hour)}
+	receiver.transfers[transferID] = &incomingTransfer{metadata: metadata, root: root, reusedChunks: reusedChunks, expires: time.Now().Add(time.Hour)}
 	writeTransferJSON(responseWriter, TransferPlan{TransferID: transferID, NeededChunks: needed})
 }
 
@@ -296,6 +295,24 @@ func (receiver *transferReceiver) complete(responseWriter http.ResponseWriter, h
 	if transfer.completed {
 		writeTransferJSON(responseWriter, TransferCompletion{TransferID: completionRequest.TransferID, Completed: transfer.conflictFile == "" && !transfer.keepLocal, ConflictFile: transfer.conflictFile, KeepLocal: transfer.keepLocal, FileHash: transfer.metadata.FileHash})
 		return
+	}
+	// Materialize only the cached chunks selected during transfer planning.
+	for index, reusedChunk := range transfer.reusedChunks {
+		if !reusedChunk {
+			continue
+		}
+		chunkName := fmt.Sprintf("chunk_%d.chunk", index)
+		cachedChunkPath := filepath.Join(receiver.projectRoot, "File Chunks", transfer.metadata.FileName, chunkName)
+		chunkData, cachedChunkReadingError := readVerifiedChunk(cachedChunkPath, transfer.metadata, index)
+		if cachedChunkReadingError != nil {
+			reportTransferFailure(responseWriter, completionRequest.TransferID, transfer.metadata.FileName, fmt.Sprintf("Read cached chunk %d", index), cachedChunkReadingError, 409)
+			return
+		}
+		stagedChunkPath := filepath.Join(transfer.root, transfer.metadata.FileName, chunkName)
+		if stagedChunkWritingError := os.WriteFile(stagedChunkPath, chunkData, 0644); stagedChunkWritingError != nil {
+			reportTransferFailure(responseWriter, completionRequest.TransferID, transfer.metadata.FileName, fmt.Sprintf("Stage cached chunk %d", index), stagedChunkWritingError, 500)
+			return
+		}
 	}
 	// Verify every staged chunk again before reconstruction.
 	for index := range transfer.metadata.ChunkHashes {

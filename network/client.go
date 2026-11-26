@@ -25,7 +25,7 @@ var transferHTTPClient = &http.Client{
 		MaxIdleConnsPerHost: 16,
 		IdleConnTimeout:     90 * time.Second,
 	},
-	Timeout: 30 * time.Second,
+	Timeout: 2 * time.Minute,
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
@@ -48,9 +48,12 @@ func StartChunkTransfer(requestContext context.Context, deviceAddress string, me
 	if metadataEncodingError != nil {
 		return nil, metadataEncodingError
 	}
+	// Allow cached-chunk verification more time than one small chunk upload.
+	startContext, cancelStart := context.WithTimeout(requestContext, time.Minute)
+	defer cancelStart()
 	// Send the metadata and read the receiver's transfer plan.
 	var transferPlan TransferPlan
-	transferStartRequestError := transferRequest(requestContext, deviceAddress, "/transfer/start", "application/json", requestBody, &transferPlan)
+	transferStartRequestError := transferRequest(startContext, deviceAddress, "/transfer/start", "application/json", requestBody, &transferPlan)
 	if transferStartRequestError != nil {
 		return nil, transferStartRequestError
 	}
@@ -80,7 +83,10 @@ func SendTransferChunk(requestContext context.Context, deviceAddress, transferID
 	// Retry only transient network failures; the same transfer ID and index make this safe.
 	var lastChunkSendingError error
 	for attempt := 0; attempt < 3; attempt++ {
-		lastChunkSendingError = transferRequest(requestContext, deviceAddress, requestPath, "application/octet-stream", chunkData, nil)
+		// Bound one chunk attempt without shortening the overall transfer context.
+		chunkContext, cancelChunk := context.WithTimeout(requestContext, 15*time.Second)
+		lastChunkSendingError = transferRequest(chunkContext, deviceAddress, requestPath, "application/octet-stream", chunkData, nil)
+		cancelChunk()
 		if lastChunkSendingError == nil {
 			return nil
 		}
@@ -114,9 +120,12 @@ func CompleteChunkTransfer(requestContext context.Context, deviceAddress, transf
 	if completionRequestEncodingError != nil {
 		return completionRequestEncodingError
 	}
+	// Allow final verification, reconstruction, and conflict handling to finish.
+	completionContext, cancelCompletion := context.WithTimeout(requestContext, 2*time.Minute)
+	defer cancelCompletion()
 	// Send the completion request and decode the receiver's decision.
 	var completionResult TransferCompletion
-	transferCompletionRequestError := transferRequest(requestContext, deviceAddress, "/transfer/complete", "application/json", requestBody, &completionResult)
+	transferCompletionRequestError := transferRequest(completionContext, deviceAddress, "/transfer/complete", "application/json", requestBody, &completionResult)
 	if transferCompletionRequestError != nil {
 		return transferCompletionRequestError
 	}
