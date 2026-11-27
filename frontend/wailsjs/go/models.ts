@@ -135,6 +135,7 @@ export namespace network {
 	export class Device {
 	    id: string;
 	    coordinatorId?: string;
+	    caFingerprint?: string;
 	    name: string;
 	    ip: string;
 	    port: number;
@@ -150,6 +151,7 @@ export namespace network {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.coordinatorId = source["coordinatorId"];
+	        this.caFingerprint = source["caFingerprint"];
 	        this.name = source["name"];
 	        this.ip = source["ip"];
 	        this.port = source["port"];

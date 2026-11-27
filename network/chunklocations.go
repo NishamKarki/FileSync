@@ -4,6 +4,7 @@ package network
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -13,8 +14,139 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
+
+// ChunkFileIndex maintains an in-memory SHA-256 -> chunk file path lookup for
+// accepted verified chunks so chunkDataHandler avoids full disk scans per request.
+type ChunkFileIndex struct {
+	mu    sync.RWMutex
+	root  string
+	paths map[string]string
+}
+
+// NewChunkFileIndex creates an index rooted at acceptedChunkRoot and warms it
+// from any existing accepted chunk folders (excluding .transfers staging).
+func NewChunkFileIndex(acceptedChunkRoot string) *ChunkFileIndex {
+	idx := &ChunkFileIndex{
+		root:  filepath.Clean(acceptedChunkRoot),
+		paths: make(map[string]string),
+	}
+	idx.Warm()
+	return idx
+}
+
+func (idx *ChunkFileIndex) isSafeAcceptedPath(candidate string) (string, bool) {
+	if idx == nil || idx.root == "" || candidate == "" {
+		return "", false
+	}
+	cleanPath := filepath.Clean(candidate)
+	rel, err := filepath.Rel(idx.root, cleanPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return "", false
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	if len(parts) < 2 || parts[0] == ".transfers" {
+		return "", false
+	}
+	return cleanPath, true
+}
+
+// Warm scans acceptedChunkRoot once to populate existing chunk locations.
+func (idx *ChunkFileIndex) Warm() {
+	if idx == nil || idx.root == "" {
+		return
+	}
+	fileFolders, err := os.ReadDir(idx.root)
+	if err != nil {
+		return
+	}
+	discovered := make(map[string]string)
+	for _, folder := range fileFolders {
+		if !folder.IsDir() || folder.Name() == ".transfers" {
+			continue
+		}
+		folderPath := filepath.Join(idx.root, folder.Name())
+		entries, readErr := os.ReadDir(folderPath)
+		if readErr != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".chunk") {
+				continue
+			}
+			chunkPath := filepath.Join(folderPath, entry.Name())
+			data, boundedErr := readBoundedChunkFile(chunkPath)
+			if boundedErr != nil {
+				continue
+			}
+			sum := sha256.Sum256(data)
+			discovered[hex.EncodeToString(sum[:])] = chunkPath
+		}
+	}
+	idx.mu.Lock()
+	for hash, path := range discovered {
+		idx.paths[hash] = path
+	}
+	idx.mu.Unlock()
+}
+
+// Add registers or updates a verified chunk hash and its disk path.
+func (idx *ChunkFileIndex) Add(chunkHash, filePath string) {
+	if idx == nil || !validLocationHash(chunkHash) {
+		return
+	}
+	safePath, ok := idx.isSafeAcceptedPath(filePath)
+	if !ok {
+		return
+	}
+	idx.mu.Lock()
+	idx.paths[chunkHash] = safePath
+	idx.mu.Unlock()
+}
+
+// RemovePath deletes any index mapping pointing to filePath.
+func (idx *ChunkFileIndex) RemovePath(filePath string) {
+	if idx == nil || filePath == "" {
+		return
+	}
+	cleanTarget := filepath.Clean(filePath)
+	idx.mu.Lock()
+	for hash, path := range idx.paths {
+		if path == cleanTarget {
+			delete(idx.paths, hash)
+		}
+	}
+	idx.mu.Unlock()
+}
+
+// RemoveDir deletes all index mappings stored under dirPath.
+func (idx *ChunkFileIndex) RemoveDir(dirPath string) {
+	if idx == nil || dirPath == "" {
+		return
+	}
+	cleanDir := filepath.Clean(dirPath)
+	prefix := cleanDir + string(filepath.Separator)
+	idx.mu.Lock()
+	for hash, path := range idx.paths {
+		if path == cleanDir || strings.HasPrefix(path, prefix) {
+			delete(idx.paths, hash)
+		}
+	}
+	idx.mu.Unlock()
+}
+
+// Lookup returns the indexed file path for a chunk hash.
+func (idx *ChunkFileIndex) Lookup(chunkHash string) (string, bool) {
+	if idx == nil || !validLocationHash(chunkHash) {
+		return "", false
+	}
+	idx.mu.RLock()
+	path, ok := idx.paths[chunkHash]
+	idx.mu.RUnlock()
+	return path, ok
+}
 
 // Rabindra Neupane
 // sqliteChunkLocationStore keeps the coordinator's device-to-chunk inventory
@@ -106,21 +238,15 @@ func (store *sqliteChunkLocationStore) DeviceIDsForChunk(requestContext context.
 
 // Reuse connections when reconstruction retrieves many chunks from one peer.
 var chunkRetrievalHTTPClient = &http.Client{
-	Transport: &http.Transport{Proxy: nil, MaxIdleConnsPerHost: 8},
-	Timeout:   10 * time.Second,
+	Transport: &http.Transport{
+		Proxy:               nil,
+		MaxIdleConnsPerHost: 8,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+	},
+	Timeout: 10 * time.Second,
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
-}
-
-// Rabindra Neupane
-// SetChunkLocationStore connects the chunk-location database implementation.
-// The device registry uses it only to match chunks with registered devices.
-func (registry *DeviceRegistry) SetChunkLocationStore(store ChunkLocationStore) {
-	// Lock the registry while replacing its optional storage connection.
-	registry.mutex.Lock()
-	defer registry.mutex.Unlock()
-	registry.chunkLocations = store
 }
 
 // Rabindra Neupane
@@ -249,10 +375,11 @@ func (registry *DeviceRegistry) RetrieveChunk(requestContext context.Context, ch
 		return nil, Device{}, fmt.Errorf("no online device contains chunk %s", chunkHash)
 	}
 
-	// Try each source until one returns the exact requested chunk.
+	// Try each source until one returns the exact requested chunk over mTLS.
+	retrievalClient := registry.ChunkRetrievalHTTPClient()
 	var lastRetrievalError error
 	for _, availableDevice := range availableDevices {
-		chunkData, chunkRetrievalError := retrieveChunkFromDevice(requestContext, availableDevice, chunkHash)
+		chunkData, chunkRetrievalError := retrieveChunkFromDevice(requestContext, retrievalClient, availableDevice, chunkHash)
 		if chunkRetrievalError == nil {
 			return chunkData, availableDevice, nil
 		}
@@ -264,21 +391,24 @@ func (registry *DeviceRegistry) RetrieveChunk(requestContext context.Context, ch
 }
 
 // Rabindra Neupane
-// retrieveChunkFromDevice downloads one bounded chunk and verifies its hash.
-func retrieveChunkFromDevice(requestContext context.Context, device Device, chunkHash string) ([]byte, error) {
+// retrieveChunkFromDevice downloads one bounded chunk over HTTPS/mTLS and verifies its hash.
+func retrieveChunkFromDevice(requestContext context.Context, httpClient *http.Client, device Device, chunkHash string) ([]byte, error) {
 	// Reject incomplete or offline coordinator records before making a request.
 	if !device.DeviceOnline || device.DeviceIP == "" || device.DevicePort < 1 || device.DevicePort > 65535 {
 		return nil, fmt.Errorf("device %q is not an available chunk source", device.DeviceName)
 	}
+	if httpClient == nil {
+		httpClient = chunkRetrievalHTTPClient
+	}
 
-	// Create a bounded request to the selected peer's chunk endpoint.
-	requestAddress := "http://" + net.JoinHostPort(device.DeviceIP, fmt.Sprintf("%d", device.DevicePort)) + "/chunks/data?hash=" + chunkHash
+	// Create a bounded HTTPS request to the selected peer's chunk endpoint.
+	requestAddress := "https://" + net.JoinHostPort(device.DeviceIP, fmt.Sprintf("%d", device.DevicePort)) + "/chunks/data?hash=" + chunkHash
 	httpRequest, chunkRequestCreationError := http.NewRequestWithContext(requestContext, http.MethodGet, requestAddress, nil)
 	if chunkRequestCreationError != nil {
 		return nil, chunkRequestCreationError
 	}
 	// Download the candidate chunk from this peer.
-	httpResponse, chunkRequestError := chunkRetrievalHTTPClient.Do(httpRequest)
+	httpResponse, chunkRequestError := httpClient.Do(httpRequest)
 	if chunkRequestError != nil {
 		return nil, fmt.Errorf("request chunk from %s: %w", device.DeviceName, chunkRequestError)
 	}
@@ -306,11 +436,14 @@ func retrieveChunkFromDevice(requestContext context.Context, device Device, chun
 }
 
 // Rabindra Neupane
-// chunkDataHandler serves verified accepted chunks by content hash.
-// Transfer staging is excluded because those chunks are not accepted yet.
-func chunkDataHandler(projectRoot string) http.HandlerFunc {
+// chunkDataHandler serves verified accepted chunks by content hash over mTLS using
+// an indexed path lookup rather than walking and hashing all chunks per request.
+func chunkDataHandler(projectRoot string, registry *DeviceRegistry, chunkIndex *ChunkFileIndex) http.HandlerFunc {
 	// Keep the accepted chunk root fixed when the server route is created.
 	acceptedChunkRoot := filepath.Join(projectRoot, "File Chunks")
+	if chunkIndex == nil {
+		chunkIndex = NewChunkFileIndex(acceptedChunkRoot)
+	}
 	return func(responseWriter http.ResponseWriter, request *http.Request) {
 		// Allow only read requests for peer chunk retrieval.
 		if request.Method != http.MethodGet {
@@ -318,56 +451,45 @@ func chunkDataHandler(projectRoot string) http.HandlerFunc {
 			http.Error(responseWriter, "Only GET requests are allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if _, authErr := authenticatePeerMTLS(registry, request, ""); authErr != nil {
+			http.Error(responseWriter, authErr.Error(), http.StatusUnauthorized)
+			return
+		}
 
-		// Validate the requested SHA-256 value before searching local storage.
+		// Validate the requested SHA-256 value before querying the index.
 		requestedHash := request.URL.Query().Get("hash")
 		if !validLocationHash(requestedHash) {
 			http.Error(responseWriter, "Provide a lowercase SHA-256 hash", http.StatusBadRequest)
 			return
 		}
 
-		// Read accepted file caches and ignore private transfer staging.
-		fileFolders, chunkRootReadingError := os.ReadDir(acceptedChunkRoot)
-		if chunkRootReadingError != nil {
-			if os.IsNotExist(chunkRootReadingError) {
-				http.Error(responseWriter, "Chunk not found", http.StatusNotFound)
-				return
-			}
-			http.Error(responseWriter, "Cannot read chunk storage", http.StatusInternalServerError)
+		// Perform O(1) indexed lookup without scanning/hashing the directory on each request.
+		chunkPath, found := chunkIndex.Lookup(requestedHash)
+		if !found {
+			http.Error(responseWriter, "Chunk not found", http.StatusNotFound)
 			return
 		}
-
-		// Search accepted file folders for content matching the requested hash.
-		for _, fileFolder := range fileFolders {
-			if !fileFolder.IsDir() || fileFolder.Name() == ".transfers" {
-				continue
-			}
-			chunkFiles, chunkFolderReadingError := os.ReadDir(filepath.Join(acceptedChunkRoot, fileFolder.Name()))
-			if chunkFolderReadingError != nil {
-				continue
-			}
-			for _, chunkFile := range chunkFiles {
-				if chunkFile.IsDir() || !strings.HasSuffix(chunkFile.Name(), ".chunk") {
-					continue
-				}
-				chunkPath := filepath.Join(acceptedChunkRoot, fileFolder.Name(), chunkFile.Name())
-				chunkData, chunkReadingError := readBoundedChunkFile(chunkPath)
-				if chunkReadingError != nil {
-					continue
-				}
-				storedHash := sha256.Sum256(chunkData)
-				if hex.EncodeToString(storedHash[:]) == requestedHash {
-					responseWriter.Header().Set("Content-Type", "application/octet-stream")
-					responseWriter.Header().Set("X-Chunk-SHA256", requestedHash)
-					responseWriter.WriteHeader(http.StatusOK)
-					_, _ = responseWriter.Write(chunkData)
-					return
-				}
-			}
+		if _, safe := chunkIndex.isSafeAcceptedPath(chunkPath); !safe {
+			chunkIndex.RemovePath(chunkPath)
+			http.Error(responseWriter, "Chunk not found", http.StatusNotFound)
+			return
 		}
-
-		// Report that this peer no longer has the advertised chunk.
-		http.Error(responseWriter, "Chunk not found", http.StatusNotFound)
+		chunkData, chunkReadingError := readBoundedChunkFile(chunkPath)
+		if chunkReadingError != nil {
+			chunkIndex.RemovePath(chunkPath)
+			http.Error(responseWriter, "Chunk not found", http.StatusNotFound)
+			return
+		}
+		storedHash := sha256.Sum256(chunkData)
+		if hex.EncodeToString(storedHash[:]) != requestedHash {
+			chunkIndex.RemovePath(chunkPath)
+			http.Error(responseWriter, "Chunk not found", http.StatusNotFound)
+			return
+		}
+		responseWriter.Header().Set("Content-Type", "application/octet-stream")
+		responseWriter.Header().Set("X-Chunk-SHA256", requestedHash)
+		responseWriter.WriteHeader(http.StatusOK)
+		_, _ = responseWriter.Write(chunkData)
 	}
 }
 
@@ -399,6 +521,10 @@ func (registry *DeviceRegistry) reportChunks(responseWriter http.ResponseWriter,
 	if request.Method != http.MethodPost {
 		responseWriter.Header().Set("Allow", http.MethodPost)
 		http.Error(responseWriter, "Only POST requests are allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if _, authErr := authenticatePeerMTLS(registry, request, ""); authErr != nil {
+		http.Error(responseWriter, authErr.Error(), http.StatusUnauthorized)
 		return
 	}
 	// Preserve the exact body before decoding and authenticating it.

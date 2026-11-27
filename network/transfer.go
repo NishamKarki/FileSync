@@ -74,8 +74,13 @@ func reportTransferFailure(
 }
 
 // Rabindra Neupane
-// cacheVerifiedTransfer saves verified chunks only after a transfer is accepted.
-func cacheVerifiedTransfer(root, staging string, metadata FileMetadata) error {
+// cacheVerifiedTransfer saves verified chunks only after a transfer is accepted
+// and registers them in any supplied ChunkFileIndex.
+func cacheVerifiedTransfer(root, staging string, metadata FileMetadata, chunkIndexes ...*ChunkFileIndex) error {
+	var chunkIdx *ChunkFileIndex
+	if len(chunkIndexes) > 0 {
+		chunkIdx = chunkIndexes[0]
+	}
 	// Create the accepted chunk folder for this file.
 	chunkFolder := filepath.Join(root, "File Chunks", metadata.FileName)
 	if chunkFolderCreationError := os.MkdirAll(chunkFolder, 0755); chunkFolderCreationError != nil {
@@ -97,6 +102,9 @@ func cacheVerifiedTransfer(root, staging string, metadata FileMetadata) error {
 		// Save the verified chunk in the reusable file cache.
 		if chunkWritingError := os.WriteFile(storedChunk, chunkData, 0644); chunkWritingError != nil {
 			return chunkWritingError
+		}
+		if chunkIdx != nil {
+			chunkIdx.Add(metadata.ChunkHashes[chunkIndex], storedChunk)
 		}
 	}
 

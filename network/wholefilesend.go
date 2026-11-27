@@ -15,10 +15,21 @@ import (
 	"strings"
 )
 
+// DefaultMaxWholeFileUploadBytes caps whole-file multipart uploads at 512 MiB.
+const DefaultMaxWholeFileUploadBytes int64 = 512 << 20
+
 // Rabindra Neupane
-// NewWholeFileSendHandler receives a complete file for performance comparison.
+// NewWholeFileSendHandler receives a complete file for performance comparison over mTLS.
 // Normal FileSync synchronization uses the incremental chunk-transfer handler.
-func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error, transferAccepted func()) http.Handler {
+func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error, transferAccepted func(), registry *DeviceRegistry, chunkIndex *ChunkFileIndex) http.Handler {
+	return NewWholeFileSendHandlerWithLimit(root, apply, transferAccepted, registry, chunkIndex, DefaultMaxWholeFileUploadBytes)
+}
+
+// NewWholeFileSendHandlerWithLimit enforces an explicit max upload byte limit on /file.
+func NewWholeFileSendHandlerWithLimit(root string, apply func(FileMetadata, string) error, transferAccepted func(), registry *DeviceRegistry, chunkIndex *ChunkFileIndex, maxUploadBytes int64) http.Handler {
+	if maxUploadBytes <= 0 {
+		maxUploadBytes = DefaultMaxWholeFileUploadBytes
+	}
 	// Create the benchmark endpoint without sharing incremental transfer state.
 	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 		// Validate that whole-file uploads use POST.
@@ -27,6 +38,16 @@ func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error
 			http.Error(responseWriter, "Only POST requests are allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
+		// Require verified non-revoked mTLS peer authentication before buffering upload bytes.
+		certDeviceID, authErr := authenticatePeerMTLS(registry, request, "")
+		if authErr != nil {
+			http.Error(responseWriter, authErr.Error(), http.StatusUnauthorized)
+			return
+		}
+
+		// Bound the entire multipart stream to protect disk and memory from unbounded uploads.
+		request.Body = http.MaxBytesReader(responseWriter, request.Body, maxUploadBytes)
 
 		// Create a multipart reader for the metadata and file sections.
 		multipartReader, multipartReaderCreationError := request.MultipartReader()
@@ -38,6 +59,11 @@ func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error
 		// Read the first section and require it to contain transfer metadata.
 		metadataPart, metadataPartReadingError := multipartReader.NextPart()
 		if metadataPartReadingError != nil || metadataPart.FormName() != "metadata" {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(metadataPartReadingError, &maxBytesErr) {
+				http.Error(responseWriter, "Whole-file upload exceeds maximum allowed size", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(responseWriter, "Transfer metadata is required; update both peers", 400)
 			return
 		}
@@ -45,6 +71,11 @@ func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error
 		// Limit the metadata size before reading it into memory.
 		metadataData, metadataReadingError := io.ReadAll(io.LimitReader(metadataPart, (8<<20)+1))
 		if metadataReadingError != nil || len(metadataData) > 8<<20 {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(metadataReadingError, &maxBytesErr) {
+				http.Error(responseWriter, "Whole-file upload exceeds maximum allowed size", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(responseWriter, "Invalid transfer metadata", 400)
 			return
 		}
@@ -69,6 +100,14 @@ func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error
 			http.Error(responseWriter, metadataValidationError.Error(), 400)
 			return
 		}
+		if metadata.DeviceID != certDeviceID {
+			http.Error(responseWriter, "Sender device identity does not match authenticated mTLS certificate", http.StatusUnauthorized)
+			return
+		}
+		if metadata.FileSize > maxUploadBytes {
+			http.Error(responseWriter, "Declared file size exceeds whole-file upload limit", http.StatusRequestEntityTooLarge)
+			return
+		}
 
 		// Reject chunk sizes that exceed the receiver's safety limit.
 		if metadata.ChunkSize > maxTransferChunkSize {
@@ -79,6 +118,11 @@ func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error
 		// Read the file section and confirm that its name matches the metadata.
 		filePart, filePartReadingError := multipartReader.NextPart()
 		if filePartReadingError != nil || filePart.FormName() != "file" || filePart.FileName() != metadata.FileName {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(filePartReadingError, &maxBytesErr) {
+				http.Error(responseWriter, "Whole-file upload exceeds maximum allowed size", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(responseWriter, "Expected matching file part", 400)
 			return
 		}
@@ -96,6 +140,7 @@ func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error
 			http.Error(responseWriter, "Cannot create transfer folder", 500)
 			return
 		}
+		defer os.RemoveAll(transferRoot)
 
 		// Create the file-specific folder that stores verified chunks.
 		folder := filepath.Join(transferRoot, metadata.FileName)
@@ -119,6 +164,11 @@ func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error
 			// Read exactly the number of bytes expected for this chunk.
 			chunk := make([]byte, int(size))
 			if _, chunkReadingError := io.ReadFull(filePart, chunk); chunkReadingError != nil {
+				var maxBytesErr *http.MaxBytesError
+				if errors.As(chunkReadingError, &maxBytesErr) {
+					http.Error(responseWriter, "Whole-file upload exceeds maximum allowed size", http.StatusRequestEntityTooLarge)
+					return
+				}
 				http.Error(responseWriter, "Incomplete uploaded file", 400)
 				return
 			}
@@ -185,8 +235,8 @@ func NewWholeFileSendHandler(root string, apply func(FileMetadata, string) error
 			return
 		}
 
-		// Cache the verified chunks for later incremental comparisons.
-		if verifiedChunkCachingError := cacheVerifiedTransfer(root, transferRoot, metadata); verifiedChunkCachingError != nil {
+		// Cache the verified chunks for later incremental comparisons and update index.
+		if verifiedChunkCachingError := cacheVerifiedTransfer(root, transferRoot, metadata, chunkIndex); verifiedChunkCachingError != nil {
 			http.Error(responseWriter, fmt.Sprintf("Cache verified chunks: %v", verifiedChunkCachingError), 500)
 			return
 		}

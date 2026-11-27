@@ -17,9 +17,15 @@ export function FetchMissingChunkFromPeers(arg1:context.Context,arg2:string,arg3
 
 export function FileWatcher(arg1:string):Promise<void>;
 
+export function GetAutoSync():Promise<boolean>;
+
+export function GetChunkSize():Promise<number>;
+
 export function GetConflicts():Promise<Array<main.ConflictRecord>>;
 
 export function GetCoordinatorPairingStatus():Promise<network.PairingStatus>;
+
+export function GetFileSyncStatuses():Promise<Record<string, string>>;
 
 export function GetRegisteredDevices():Promise<Array<network.Device>>;
 
@@ -29,17 +35,21 @@ export function HandleFileEvent(arg1:fsnotify.Event):Promise<void>;
 
 export function ListSyncedFiles():Promise<Array<main.SyncedFile>>;
 
+export function PullFile(arg1:string,arg2:string):Promise<main.SyncResult>;
+
 export function ReconstructFile(arg1:string):Promise<void>;
 
 export function RemoveRegisteredDevice(arg1:string):Promise<void>;
 
 export function ResolveConflict(arg1:number,arg2:string):Promise<main.ConflictResolution>;
 
-export function SaveChunks(arg1:string,arg2:Array<main.Chunk>):Promise<void>;
-
 export function ScheduleFileProcessing(arg1:string):Promise<void>;
 
 export function SendFile(arg1:string,arg2:string):Promise<main.SyncResult>;
+
+export function SetAutoSync(arg1:boolean,arg2:string):Promise<void>;
+
+export function SetChunkSize(arg1:number):Promise<void>;
 
 export function StartCoordinatorPairing():Promise<network.PairingStatus>;
 

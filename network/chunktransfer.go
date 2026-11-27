@@ -2,6 +2,7 @@
 package network
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,10 +18,18 @@ import (
 	"time"
 )
 
+const (
+	maxConcurrentTransfersPerPeer  = 4
+	defaultTransferStagingTTL      = time.Hour
+	defaultTransferCleanupInterval = time.Minute
+)
+
 // Rabindra Neupane
 // incomingTransfer tracks one isolated receiver-side transfer until it expires
 // or finishes. Conflict and keep-local results are saved for safe retries.
 type incomingTransfer struct {
+	mu           sync.RWMutex
+	senderKey    string
 	metadata     FileMetadata
 	root         string
 	reusedChunks []bool
@@ -38,27 +47,98 @@ type transferReceiver struct {
 	projectRoot      string
 	reconstruct      func(FileMetadata, string) error
 	transferAccepted func()
+	registry         *DeviceRegistry
+	chunkIndex       *ChunkFileIndex
 	transfers        map[string]*incomingTransfer
+	stagingTTL       time.Duration
+	cleanupInterval  time.Duration
 }
 
 // Rabindra Neupane
 // newTransferReceiver creates the shared state used by all transfer endpoints.
-func newTransferReceiver(root string, reconstruct func(FileMetadata, string) error, transferAccepted func()) *transferReceiver {
-	// Create one transfer map shared by the start, chunk, and complete routes.
-	return &transferReceiver{projectRoot: root, reconstruct: reconstruct, transferAccepted: transferAccepted, transfers: make(map[string]*incomingTransfer)}
+func newTransferReceiver(root string, reconstruct func(FileMetadata, string) error, transferAccepted func(), registry *DeviceRegistry, chunkIndex *ChunkFileIndex) *transferReceiver {
+	return &transferReceiver{
+		projectRoot:      root,
+		reconstruct:      reconstruct,
+		transferAccepted: transferAccepted,
+		registry:         registry,
+		chunkIndex:       chunkIndex,
+		transfers:        make(map[string]*incomingTransfer),
+		stagingTTL:       defaultTransferStagingTTL,
+		cleanupInterval:  defaultTransferCleanupInterval,
+	}
 }
 
-// Rabindra Neupane
-// NewTransferHandler shares the same receiver state across all transfer endpoints.
-// An explicit root also allows end-to-end tests to use temporary storage.
-func NewTransferHandler(root string, reconstruct func(FileMetadata, string) error, transferAccepted func()) http.Handler {
-	// Create one receiver so all three endpoints see the same transfer state.
-	receiver := newTransferReceiver(root, reconstruct, transferAccepted)
+// NewTransferHandlerWithContext runs the mTLS transfer handler and a background
+// cleanup ticker tied to ctx to purge expired staging folders.
+func NewTransferHandlerWithContext(ctx context.Context, root string, reconstruct func(FileMetadata, string) error, transferAccepted func(), registry *DeviceRegistry, chunkIndex *ChunkFileIndex) http.Handler {
+	receiver := newTransferReceiver(root, reconstruct, transferAccepted, registry, chunkIndex)
+	if ctx != nil {
+		go receiver.cleanupLoop(ctx)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/transfer/start", receiver.start)
 	mux.HandleFunc("/transfer/chunk", receiver.chunk)
 	mux.HandleFunc("/transfer/complete", receiver.complete)
 	return mux
+}
+
+func (receiver *transferReceiver) cleanupLoop(ctx context.Context) {
+	interval := receiver.cleanupInterval
+	if interval <= 0 {
+		interval = defaultTransferCleanupInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			receiver.cleanupExpiredAndStaleStaging()
+		}
+	}
+}
+
+func (receiver *transferReceiver) cleanupExpiredAndStaleStaging() {
+	now := time.Now()
+	ttl := receiver.stagingTTL
+	if ttl <= 0 {
+		ttl = defaultTransferStagingTTL
+	}
+
+	receiver.mutex.Lock()
+	activeRoots := make(map[string]bool)
+	for transferID, transfer := range receiver.transfers {
+		if now.After(transfer.expires) {
+			os.RemoveAll(transfer.root)
+			delete(receiver.transfers, transferID)
+			continue
+		}
+		if transfer.root != "" {
+			activeRoots[filepath.Clean(transfer.root)] = true
+		}
+	}
+	receiver.mutex.Unlock()
+
+	stagingParent := filepath.Join(receiver.projectRoot, "File Chunks", ".transfers")
+	entries, err := os.ReadDir(stagingParent)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidate := filepath.Clean(filepath.Join(stagingParent, entry.Name()))
+		if activeRoots[candidate] {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr == nil && now.Sub(info.ModTime()) > ttl {
+			_ = os.RemoveAll(candidate)
+		}
+	}
 }
 
 // Rabindra Neupane
@@ -69,6 +149,11 @@ func (receiver *transferReceiver) start(responseWriter http.ResponseWriter, requ
 	if request.Method != http.MethodPost {
 		responseWriter.Header().Set("Allow", "POST")
 		http.Error(responseWriter, "Only POST requests are allowed", 405)
+		return
+	}
+	certDeviceID, authErr := authenticatePeerMTLS(receiver.registry, request, "")
+	if authErr != nil {
+		http.Error(responseWriter, authErr.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -83,6 +168,10 @@ func (receiver *transferReceiver) start(responseWriter http.ResponseWriter, requ
 		http.Error(responseWriter, metadataValidationError.Error(), 400)
 		return
 	}
+	if metadata.DeviceID != certDeviceID {
+		http.Error(responseWriter, "Sender device identity does not match authenticated mTLS certificate", http.StatusUnauthorized)
+		return
+	}
 	// Check the chunk size before any receiver allocation.
 	if metadata.ChunkSize > maxTransferChunkSize {
 		http.Error(responseWriter, "Chunk size exceeds 16 MiB transfer limit", 400)
@@ -92,14 +181,25 @@ func (receiver *transferReceiver) start(responseWriter http.ResponseWriter, requ
 	// Lock active transfer state while cleaning and creating an entry.
 	receiver.mutex.Lock()
 	defer receiver.mutex.Unlock()
-	// Remove expired IDs so abandoned transfers do not fill the active limit.
-	// Keep their staging folders available for manual inspection.
+	// Remove expired IDs and their staging folders so abandoned transfers do not leak disk space.
+	now := time.Now()
+	activeForSender := 0
 	for transferID, transfer := range receiver.transfers {
-		if time.Now().After(transfer.expires) {
+		if now.After(transfer.expires) {
+			os.RemoveAll(transfer.root)
 			delete(receiver.transfers, transferID)
+			continue
+		}
+		if transfer.senderKey == certDeviceID && !transfer.completed {
+			activeForSender++
 		}
 	}
-	// Check the active-transfer limit before creating more state.
+	// Enforce per-peer concurrency cap so one peer cannot starve other devices.
+	if activeForSender >= maxConcurrentTransfersPerPeer {
+		http.Error(responseWriter, "Too many concurrent transfers for this peer", http.StatusTooManyRequests)
+		return
+	}
+	// Check the global active-transfer limit before creating more state.
 	if len(receiver.transfers) >= 64 {
 		http.Error(responseWriter, "Too many active transfers", 503)
 		return
@@ -134,6 +234,9 @@ func (receiver *transferReceiver) start(responseWriter http.ResponseWriter, requ
 		http.Error(responseWriter, "Cannot create chunk folder", 500)
 		return
 	}
+	// Collect prior staging directories for this file so interrupted transfers can resume verified chunks.
+	previousStagingFolders := findPriorStagingFolders(staging, stagingName+"-incoming-", root)
+
 	// Create the list of chunks that the sender must upload.
 	needed := make([]int, 0)
 	reusedChunks := make([]bool, len(metadata.ChunkHashes))
@@ -142,8 +245,14 @@ func (receiver *transferReceiver) start(responseWriter http.ResponseWriter, requ
 		name := fmt.Sprintf("chunk_%d.chunk", index)
 		// Read cached bytes only when their size and hash match this file version.
 		_, storedChunkReadingError := readVerifiedChunk(filepath.Join(receiver.projectRoot, "File Chunks", metadata.FileName, name), metadata, index)
-		// Request a missing or changed cached chunk from the sender.
+		// If not in accepted cache, attempt to resume from an earlier interrupted staging folder.
 		if os.IsNotExist(storedChunkReadingError) || storedChunkReadingError == errChunkMismatch {
+			if resumedData, resumed := readResumedStagedChunk(previousStagingFolders, metadata, index); resumed {
+				stagedPath := filepath.Join(folder, name)
+				if writeErr := os.WriteFile(stagedPath, resumedData, 0644); writeErr == nil {
+					continue
+				}
+			}
 			needed = append(needed, index)
 			continue
 		}
@@ -156,7 +265,11 @@ func (receiver *transferReceiver) start(responseWriter http.ResponseWriter, requ
 		reusedChunks[index] = true
 	}
 	// Save the active transfer and respond with only the required indexes.
-	receiver.transfers[transferID] = &incomingTransfer{metadata: metadata, root: root, reusedChunks: reusedChunks, expires: time.Now().Add(time.Hour)}
+	ttl := receiver.stagingTTL
+	if ttl <= 0 {
+		ttl = defaultTransferStagingTTL
+	}
+	receiver.transfers[transferID] = &incomingTransfer{senderKey: certDeviceID, metadata: metadata, root: root, reusedChunks: reusedChunks, expires: time.Now().Add(ttl)}
 	writeTransferJSON(responseWriter, TransferPlan{TransferID: transferID, NeededChunks: needed})
 }
 
@@ -206,14 +319,26 @@ func (receiver *transferReceiver) chunk(responseWriter http.ResponseWriter, requ
 		http.Error(responseWriter, "Only POST requests are allowed", 405)
 		return
 	}
-	// Lock the transfer so uploads cannot race with completion.
+	certDeviceID, authErr := authenticatePeerMTLS(receiver.registry, request, "")
+	if authErr != nil {
+		http.Error(responseWriter, authErr.Error(), http.StatusUnauthorized)
+		return
+	}
+	// Look up the active transfer briefly, then allow concurrent chunk uploads under RLock.
 	receiver.mutex.Lock()
-	// Release the lock after validation and writing finish.
-	defer receiver.mutex.Unlock()
-	// Read the active transfer selected by the query string.
 	transfer := receiver.transfers[request.URL.Query().Get("transferId")]
-	// Check that the transfer ID is known and still active.
-	if transfer == nil || time.Now().After(transfer.expires) {
+	receiver.mutex.Unlock()
+	if transfer == nil {
+		http.Error(responseWriter, "Unknown or expired transfer", 404)
+		return
+	}
+	transfer.mu.RLock()
+	defer transfer.mu.RUnlock()
+	if transfer.senderKey != certDeviceID {
+		http.Error(responseWriter, "Transfer belongs to a different peer", http.StatusUnauthorized)
+		return
+	}
+	if time.Now().After(transfer.expires) {
 		http.Error(responseWriter, "Unknown or expired transfer", 404)
 		return
 	}
@@ -273,6 +398,11 @@ func (receiver *transferReceiver) complete(responseWriter http.ResponseWriter, h
 		http.Error(responseWriter, "Only POST requests are allowed", 405)
 		return
 	}
+	certDeviceID, authErr := authenticatePeerMTLS(receiver.registry, httpRequest, "")
+	if authErr != nil {
+		http.Error(responseWriter, authErr.Error(), http.StatusUnauthorized)
+		return
+	}
 	// Read the transfer ID from one strict JSON object.
 	var completionRequest struct {
 		TransferID string `json:"transferId"`
@@ -282,13 +412,21 @@ func (receiver *transferReceiver) complete(responseWriter http.ResponseWriter, h
 		http.Error(responseWriter, "Invalid completion request", 400)
 		return
 	}
-	// Lock the transfer so no chunk can change during final verification.
+	// Look up the transfer briefly, then lock it exclusively so no chunk upload races completion.
 	receiver.mutex.Lock()
-	defer receiver.mutex.Unlock()
-	// Read the transfer selected by the completion request.
 	transfer := receiver.transfers[completionRequest.TransferID]
-	// Check that the transfer is known and still active.
-	if transfer == nil || time.Now().After(transfer.expires) {
+	receiver.mutex.Unlock()
+	if transfer == nil {
+		http.Error(responseWriter, "Unknown or expired transfer", 404)
+		return
+	}
+	transfer.mu.Lock()
+	defer transfer.mu.Unlock()
+	if transfer.senderKey != certDeviceID {
+		http.Error(responseWriter, "Transfer belongs to a different peer", http.StatusUnauthorized)
+		return
+	}
+	if time.Now().After(transfer.expires) {
 		http.Error(responseWriter, "Unknown or expired transfer", 404)
 		return
 	}
@@ -315,10 +453,19 @@ func (receiver *transferReceiver) complete(responseWriter http.ResponseWriter, h
 			return
 		}
 	}
-	// Verify every staged chunk again before reconstruction.
+	// Verify every staged chunk again before reconstruction, falling back to peer retrieval if needed.
 	for index := range transfer.metadata.ChunkHashes {
 		chunkPath := filepath.Join(transfer.root, transfer.metadata.FileName, fmt.Sprintf("chunk_%d.chunk", index))
 		if _, chunkVerificationError := readVerifiedChunk(chunkPath, transfer.metadata, index); chunkVerificationError != nil {
+			if receiver.registry != nil && receiver.registry.Status().Registered {
+				if peerData, _, peerErr := receiver.registry.RetrieveChunk(httpRequest.Context(), transfer.metadata.ChunkHashes[index]); peerErr == nil {
+					if writeErr := os.WriteFile(chunkPath, peerData, 0644); writeErr == nil {
+						if _, recheckErr := readVerifiedChunk(chunkPath, transfer.metadata, index); recheckErr == nil {
+							continue
+						}
+					}
+				}
+			}
 			reportTransferFailure(responseWriter, completionRequest.TransferID, transfer.metadata.FileName, fmt.Sprintf("Verify chunk %d", index), chunkVerificationError, 409)
 			return
 		}
@@ -335,6 +482,7 @@ func (receiver *transferReceiver) complete(responseWriter http.ResponseWriter, h
 		var keepLocalError *KeepLocalError
 		if errors.As(reconstructionError, &keepLocalError) {
 			transfer.completed, transfer.keepLocal = true, true
+			os.RemoveAll(transfer.root)
 			writeTransferJSON(responseWriter, TransferCompletion{TransferID: completionRequest.TransferID, KeepLocal: true})
 			return
 		}
@@ -343,7 +491,7 @@ func (receiver *transferReceiver) complete(responseWriter http.ResponseWriter, h
 		if errors.As(reconstructionError, &conflictError) {
 			transfer.completed = true
 			transfer.conflictFile = conflictError.ConflictFile
-			// Keep conflict staging for inspection without replacing accepted cache.
+			os.RemoveAll(transfer.root)
 			writeTransferJSON(responseWriter, TransferCompletion{TransferID: completionRequest.TransferID, ConflictFile: conflictError.ConflictFile})
 			return
 		}
@@ -351,11 +499,13 @@ func (receiver *transferReceiver) complete(responseWriter http.ResponseWriter, h
 		reportTransferFailure(responseWriter, completionRequest.TransferID, transfer.metadata.FileName, "Apply verified file", reconstructionError, 500)
 		return
 	}
-	// Save verified chunks for reuse only after the file was accepted.
-	if verifiedChunkCachingError := cacheVerifiedTransfer(receiver.projectRoot, transfer.root, transfer.metadata); verifiedChunkCachingError != nil {
+	// Save verified chunks for reuse only after the file was accepted and index them.
+	if verifiedChunkCachingError := cacheVerifiedTransfer(receiver.projectRoot, transfer.root, transfer.metadata, receiver.chunkIndex); verifiedChunkCachingError != nil {
 		reportTransferFailure(responseWriter, completionRequest.TransferID, transfer.metadata.FileName, "Cache verified chunks", verifiedChunkCachingError, 500)
 		return
 	}
+	// Clean up completed staging folder and any prior interrupted staging folders for this file.
+	cleanupFileStagingFolders(filepath.Join(receiver.projectRoot, "File Chunks", ".transfers"), strings.ReplaceAll(transfer.metadata.FileName, "*", "_")+"-incoming-")
 	// Report the accepted cache after every chunk is safely available to peers.
 	if receiver.transferAccepted != nil {
 		go receiver.transferAccepted()
@@ -364,4 +514,45 @@ func (receiver *transferReceiver) complete(responseWriter http.ResponseWriter, h
 	transfer.completed = true
 	// Respond with the verified complete-file hash.
 	writeTransferJSON(responseWriter, TransferCompletion{TransferID: completionRequest.TransferID, Completed: true, FileHash: transfer.metadata.FileHash})
+}
+
+func findPriorStagingFolders(stagingRoot, prefix, currentRoot string) []string {
+	entries, err := os.ReadDir(stagingRoot)
+	if err != nil {
+		return nil
+	}
+	var folders []string
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		candidate := filepath.Join(stagingRoot, entry.Name())
+		if filepath.Clean(candidate) != filepath.Clean(currentRoot) {
+			folders = append(folders, candidate)
+		}
+	}
+	return folders
+}
+
+func readResumedStagedChunk(folders []string, metadata FileMetadata, index int) ([]byte, bool) {
+	chunkName := fmt.Sprintf("chunk_%d.chunk", index)
+	for _, folder := range folders {
+		chunkPath := filepath.Join(folder, metadata.FileName, chunkName)
+		if data, err := readVerifiedChunk(chunkPath, metadata, index); err == nil {
+			return data, true
+		}
+	}
+	return nil, false
+}
+
+func cleanupFileStagingFolders(stagingRoot, prefix string) {
+	entries, err := os.ReadDir(stagingRoot)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+			_ = os.RemoveAll(filepath.Join(stagingRoot, entry.Name()))
+		}
+	}
 }

@@ -54,15 +54,6 @@ func (app *App) AddFiles() (*FileImportResult, error) {
 // File copy: Nisham Karki. Existing-file handling: Rabindra Neupane.
 func (app *App) addSelectedFile(selectFilePath string) string {
 
-	// Read the selected file name without its outside folder path.
-	fileName := filepath.Base(selectFilePath)
-
-	// Create the default destination inside Synced Files.
-	destinationFilePath := filepath.Join(
-		app.syncFolderPath,
-		fileName,
-	)
-
 	// Check for an existing copy or find an available destination name.
 	destinationFilePath, ifFileAlreadyExists :=
 		GetAvailableFilePath(

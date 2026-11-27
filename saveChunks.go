@@ -10,15 +10,6 @@ import (
 )
 
 // Rabindra Neupane
-// SaveChunks preserves Nisham Karki's public method and logs storage failures.
-func (app *App) SaveChunks(filePath string, chunks []Chunk) {
-	// Save the chunks and report errors for older callers that do not return them.
-	if chunkSavingError := app.saveChunks(filePath, chunks); chunkSavingError != nil {
-		fmt.Println("Chunk saving error:", chunkSavingError)
-	}
-}
-
-// Rabindra Neupane
 // saveChunks stores changed chunks and removes unused trailing chunks.
 // Chunk storage implementation: Nisham Karki. Error propagation: Rabindra Neupane.
 func (app *App) saveChunks(filePath string, chunks []Chunk) error {
@@ -86,6 +77,9 @@ func (app *App) saveChunks(filePath string, chunks []Chunk) error {
 					"CHUNK UNCHANGED: ",
 					chunkFileName,
 				)
+				if app.chunkIndex != nil {
+					app.chunkIndex.Add(chunk.Hash, chunkFilePath)
+				}
 
 				// Skip saving because the chunk did not change
 				continue
@@ -110,6 +104,9 @@ func (app *App) saveChunks(filePath string, chunks []Chunk) error {
 				chunkSavingError,
 			)
 			return chunkSavingError
+		}
+		if app.chunkIndex != nil {
+			app.chunkIndex.Add(chunk.Hash, chunkFilePath)
 		}
 
 	}
@@ -150,6 +147,9 @@ func (app *App) saveChunks(filePath string, chunks []Chunk) error {
 				oldChunkRemovalError,
 			)
 			return oldChunkRemovalError
+		}
+		if app.chunkIndex != nil {
+			app.chunkIndex.RemovePath(oldChunkFilePath)
 		}
 
 		fmt.Println(

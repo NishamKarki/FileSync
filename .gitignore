@@ -5,11 +5,17 @@
 /frontend/dist/
 /frontend/node_modules/
 *.db
+*.db-shm
+*.db-wal
 # Rabindra Neupane - preserved incoming conflict copies are runtime data.
 /Synced Files Conflict/
 # Rabindra Neupane - keep older conflict copies ignored until moved.
 /Conflicting Files/
 # Rabindra Neupane - installation identity and coordinator settings stay local.
 /.filesync-device.json
+.filesync-device.json
 /.filesync-device-*.tmp
+*.pem
+*.key
 /Performance Logs/
+.agents/skills-lock.json

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -18,11 +19,11 @@ import (
 // Rabindra Neupane
 // PingResponse describes the identity and role returned by the ping endpoint.
 type PingResponse struct {
-	Success     bool   `json:"success"`
-	Message     string `json:"message"`
-	DeviceName  string `json:"deviceName"`
-	DeviceID    string `json:"deviceId"`
-	Coordinator bool   `json:"coordinator"`
+	Success       bool   `json:"success"`
+	Message       string `json:"message"`
+	DeviceName    string `json:"deviceName"`
+	Coordinator   bool   `json:"coordinator"`
+	CAFingerprint string `json:"caFingerprint,omitempty"`
 }
 
 // Rabindra Neupane
@@ -42,10 +43,13 @@ func pingHandler(responseWriter http.ResponseWriter, _ *http.Request, registry *
 		Message:    "FileSync Client is Online",
 		DeviceName: deviceName,
 	}
-	// Add only the coordinator role; keep the persistent device ID private until authentication.
+	// Add only the coordinator role and CA fingerprint; keep private keys and device ID out.
 	if registry != nil {
 		registrationStatus := registry.Status()
 		pingResponse.Coordinator = registrationStatus.Coordinator
+		if registrationStatus.Coordinator {
+			pingResponse.CAFingerprint = registry.CAFingerprint()
+		}
 	}
 	json.NewEncoder(responseWriter).Encode(pingResponse)
 }
@@ -53,7 +57,7 @@ func pingHandler(responseWriter http.ResponseWriter, _ *http.Request, registry *
 // Rabindra Neupane
 // StartServer registers FileSync routes and runs the local HTTP server.
 // Reconstruction implementation: Nisham Karki. Network integration: Rabindra Neupane.
-func StartServer(serverContext context.Context, serverPort string, completeTransfer func(FileMetadata, string) error, registry *DeviceRegistry, transferAccepted func()) {
+func StartServer(serverContext context.Context, serverPort string, completeTransfer func(FileMetadata, string) error, registry *DeviceRegistry, transferAccepted func(), getFileMetadata ...func(string) (FileMetadata, error)) {
 	// Read the project folder used for transfer staging and chunk storage.
 	projectDirectory, projectDirectoryReadingError := os.Getwd()
 	if projectDirectoryReadingError != nil {
@@ -66,12 +70,19 @@ func StartServer(serverContext context.Context, serverPort string, completeTrans
 		fmt.Println("Network server error:", listenerCreationError)
 		return
 	}
-	StartServerAtRoot(serverContext, listener, projectDirectory, completeTransfer, registry, transferAccepted)
+	StartServerAtRoot(serverContext, listener, projectDirectory, completeTransfer, registry, transferAccepted, getFileMetadata...)
 }
 
-// StartServerAtRoot serves FileSync from an explicit root and listener.
-// Tests use this entry point to isolate several nodes with temporary roots and ports.
-func StartServerAtRoot(serverContext context.Context, listener net.Listener, projectDirectory string, completeTransfer func(FileMetadata, string) error, registry *DeviceRegistry, transferAccepted func()) {
+// StartServerAtRoot serves FileSync over HTTPS with mutual TLS from an explicit root and listener.
+func StartServerAtRoot(serverContext context.Context, listener net.Listener, projectDirectory string, completeTransfer func(FileMetadata, string) error, registry *DeviceRegistry, transferAccepted func(), getFileMetadata ...func(string) (FileMetadata, error)) {
+	chunkIndex := registry.ChunkFileIndex()
+	if chunkIndex == nil {
+		chunkIndex = NewChunkFileIndex(filepath.Join(projectDirectory, "File Chunks"))
+		if registry != nil {
+			registry.SetChunkFileIndex(chunkIndex)
+		}
+	}
+
 	// Create the server router and register the discovery endpoint.
 	serverRoutes := http.NewServeMux()
 	serverRoutes.HandleFunc("/ping", func(responseWriter http.ResponseWriter, httpRequest *http.Request) {
@@ -85,18 +96,30 @@ func StartServerAtRoot(serverContext context.Context, listener net.Listener, pro
 		serverRoutes.Handle("/devices", registry.Handler())
 		serverRoutes.Handle("/devices/", registry.Handler())
 	}
-	// Serve only accepted verified chunks for peer reconstruction requests.
-	serverRoutes.HandleFunc("/chunks/data", chunkDataHandler(projectDirectory))
-	// Register benchmark whole-file transfer and normal incremental transfer routes.
-	serverRoutes.Handle("/file", NewWholeFileSendHandler(projectDirectory, completeTransfer, transferAccepted))
-	serverRoutes.Handle("/transfer/", NewTransferHandler(projectDirectory, completeTransfer, transferAccepted))
+	// Serve only accepted verified chunks for mTLS-authenticated peer reconstruction requests.
+	serverRoutes.HandleFunc("/chunks/data", chunkDataHandler(projectDirectory, registry, chunkIndex))
+	// Serve current file metadata for mTLS-authenticated peer pull requests.
+	var metadataProvider func(string) (FileMetadata, error)
+	if len(getFileMetadata) > 0 {
+		metadataProvider = getFileMetadata[0]
+	}
+	serverRoutes.HandleFunc("/files/metadata", fileMetadataHandler(metadataProvider, registry))
+	// Register mTLS-authenticated benchmark whole-file transfer and normal incremental transfer routes.
+	serverRoutes.Handle("/file", NewWholeFileSendHandler(projectDirectory, completeTransfer, transferAccepted, registry, chunkIndex))
+	serverRoutes.Handle("/transfer/", NewTransferHandlerWithContext(serverContext, projectDirectory, completeTransfer, transferAccepted, registry, chunkIndex))
 
 	// Log the listening port for manual testing.
-	fmt.Println("FileSync Network Server Starting...", listener.Addr().String())
+	fmt.Println("FileSync HTTPS/mTLS Server Starting...", listener.Addr().String())
 	fmt.Println("Listening on port:", listener.Addr().String())
 
-	// Create the HTTP server with a bounded header timeout.
-	networkServer := &http.Server{Handler: serverRoutes, ReadHeaderTimeout: 5 * time.Second}
+	// Create the HTTPS server with mutual TLS and explicit resource timeouts.
+	networkServer := &http.Server{
+		Handler:           serverRoutes,
+		TLSConfig:         registry.ServerTLSConfig(),
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       90 * time.Second,
+	}
 	// Create a signal that prevents shutdown after normal server exit.
 	serverStopped := make(chan struct{})
 	defer close(serverStopped)
@@ -114,8 +137,8 @@ func StartServerAtRoot(serverContext context.Context, listener net.Listener, pro
 		// Stop accepting new requests and close the server.
 		networkServer.Shutdown(shutdownContext)
 	}()
-	// Run the server until shutdown or an unexpected listening error.
-	networkServerError := networkServer.Serve(listener)
+	// Serve TLS using certificates supplied by ServerTLSConfig (no unencrypted key path needed).
+	networkServerError := networkServer.ServeTLS(listener, "", "")
 	// Report unexpected server errors but ignore normal shutdown.
 	if networkServerError != nil && !errors.Is(networkServerError, http.ErrServerClosed) {
 		fmt.Println("Network server error:", networkServerError)
@@ -131,8 +154,8 @@ func validateFileMetadata(metadata FileMetadata) error {
 		strings.ContainsAny(metadata.FileName, "/\\:\x00") || metadata.FileID != metadata.FileName {
 		return fmt.Errorf("Invalid file identity: expected a plain file name and matching file ID")
 	}
-	// Validate the base-version relationship for new and existing files.
-	if metadata.Version < 1 || (metadata.BaseVersion != nil && (*metadata.BaseVersion < 1 || *metadata.BaseVersion >= metadata.Version)) {
+	// Require a positive file version counter.
+	if metadata.Version < 1 {
 		return fmt.Errorf("Invalid version metadata")
 	}
 	// Validate file and chunk sizes before calculating expected counts.
@@ -174,20 +197,6 @@ func validateFileMetadata(metadata FileMetadata) error {
 			return fmt.Errorf("Invalid chunk SHA-256 hash")
 		}
 	}
-	// Validate base chunk hashes used for incremental comparison.
-	for _, baseChunkHash := range metadata.BaseChunkHashes {
-		// Reject malformed hashes from the shared base version.
-		if !validHash(baseChunkHash) {
-			return fmt.Errorf("Invalid base chunk SHA-256 hash")
-		}
-	}
-	// Validate revision identities used to detect repeated file contents.
-	for _, baseRevision := range metadata.BaseRevisions {
-		// Reject malformed identities from the version history.
-		if !validHash(baseRevision) {
-			return fmt.Errorf("Invalid base revision identity")
-		}
-	}
 	// Verify that an empty file uses the standard SHA-256 value.
 	if metadata.FileSize == 0 {
 		// Calculate the known SHA-256 value for empty content.
@@ -199,4 +208,33 @@ func validateFileMetadata(metadata FileMetadata) error {
 	}
 	// Return success after every metadata field passes validation.
 	return nil
+}
+
+func fileMetadataHandler(provider func(string) (FileMetadata, error), registry *DeviceRegistry) http.HandlerFunc {
+	return func(responseWriter http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			responseWriter.Header().Set("Allow", http.MethodGet)
+			http.Error(responseWriter, "Only GET requests are allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if _, authErr := authenticatePeerMTLS(registry, request, ""); authErr != nil {
+			http.Error(responseWriter, authErr.Error(), http.StatusUnauthorized)
+			return
+		}
+		if provider == nil {
+			http.Error(responseWriter, "File metadata pull unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		fileName := request.URL.Query().Get("name")
+		if fileName == "" || fileName == "." || fileName == ".." || strings.ContainsAny(fileName, "/\\:\x00") {
+			http.Error(responseWriter, "Invalid file name", http.StatusBadRequest)
+			return
+		}
+		metadata, err := provider(fileName)
+		if err != nil {
+			http.Error(responseWriter, err.Error(), http.StatusNotFound)
+			return
+		}
+		writeTransferJSON(responseWriter, metadata)
+	}
 }

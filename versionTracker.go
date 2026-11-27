@@ -5,7 +5,6 @@ package main
 import (
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -95,74 +94,6 @@ func RecordFileVersion(db *sql.DB, syncFolderPath, filePath, deviceID string, ch
 		}
 	}
 	return databaseTransaction.Commit()
-}
-
-// Rabindra Neupane
-// loadBaseChunkHashes returns ordered hashes for one recorded base version.
-// An empty result is a known empty file, while missing history is an error.
-func loadBaseChunkHashes(databaseTransaction *sql.Tx, fileID string, version int) ([]string, error) {
-	// Query the database row that identifies the requested file version.
-	var id int64
-	if versionIDQueryError := databaseTransaction.QueryRow("SELECT id FROM file_versions WHERE file_id = ? AND version_number = ? ORDER BY id DESC LIMIT 1", fileID, version).Scan(&id); versionIDQueryError != nil {
-		return nil, versionIDQueryError
-	}
-	chunkRows, chunkQueryError := databaseTransaction.Query("SELECT chunk_index,chunk_hash FROM chunks WHERE file_version_id = ? ORDER BY chunk_index", id)
-	if chunkQueryError != nil {
-		return nil, chunkQueryError
-	}
-	defer chunkRows.Close()
-	hashes := make([]string, 0)
-	for chunkRows.Next() {
-		var index int
-		var hash string
-		if chunkScanningError := chunkRows.Scan(&index, &hash); chunkScanningError != nil {
-			return nil, chunkScanningError
-		}
-		if index != len(hashes) {
-			return nil, fmt.Errorf("base version chunk indexes are incomplete")
-		}
-		hashes = append(hashes, hash)
-	}
-	return hashes, chunkRows.Err()
-}
-
-// Rabindra Neupane
-// Length-prefixed fixed-size hash lists identify file contents independently of
-// local version counters. This is a revision identity, not the whole-file hash.
-func chunkRevisionIdentity(size int64, hashes []string) string {
-	// Create a hash containing chunk size and count to avoid ambiguous lists.
-	hasher := sha256.New()
-	fmt.Fprintf(hasher, "%d:%d:", size, len(hashes))
-	for _, hash := range hashes {
-		hasher.Write([]byte(hash))
-	}
-	return hex.EncodeToString(hasher.Sum(nil))
-}
-
-// Rabindra Neupane
-// loadBaseRevisionHistory follows parent versions and returns their content identities.
-func loadBaseRevisionHistory(databaseTransaction *sql.Tx, fileID string, version int) ([]string, error) {
-	// Create an ordered list starting with the newest shared base.
-	identities := make([]string, 0)
-	for version > 0 {
-		hashes, baseChunkReadingError := loadBaseChunkHashes(databaseTransaction, fileID, version)
-		if baseChunkReadingError != nil {
-			return nil, baseChunkReadingError
-		}
-		identities = append(identities, chunkRevisionIdentity(chunkSize, hashes))
-		var parent sql.NullInt64
-		if parentVersionQueryError := databaseTransaction.QueryRow("SELECT based_on_version FROM file_versions WHERE file_id=? AND version_number=? ORDER BY id DESC LIMIT 1", fileID, version).Scan(&parent); parentVersionQueryError != nil {
-			return nil, parentVersionQueryError
-		}
-		if !parent.Valid {
-			break
-		}
-		if parent.Int64 < 1 || parent.Int64 >= int64(version) {
-			return nil, fmt.Errorf("invalid version parent chain")
-		}
-		version = int(parent.Int64)
-	}
-	return identities, nil
 }
 
 // Some apps (like Word, or Windows during a large copy) briefly lock a file

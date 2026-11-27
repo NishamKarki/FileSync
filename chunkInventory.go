@@ -133,6 +133,9 @@ func (app *App) FetchMissingChunkFromPeers(requestContext context.Context, fileN
 	if chunkRenameError := os.Rename(temporaryPath, finalChunkPath); chunkRenameError != nil {
 		return fmt.Errorf("install missing chunk: %w", chunkRenameError)
 	}
+	if app.chunkIndex != nil {
+		app.chunkIndex.Add(chunkHash, finalChunkPath)
+	}
 	// Report the new local copy without failing a successful recovery when offline.
 	app.scheduleLocalChunkInventoryReport()
 	return nil

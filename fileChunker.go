@@ -9,8 +9,30 @@ import (
 	"os"
 )
 
-// Use 4 KiB chunks so small edits transfer less data while large files remain practical.
-const chunkSize = 4 * 1024
+// Use 4 KiB chunks by default so small edits transfer less data while large files remain practical.
+const defaultChunkSize = 4 * 1024
+
+// effectiveChunkSize returns the active fixed chunk size for this App instance.
+func (app *App) effectiveChunkSize() int {
+	if app != nil && app.chunkSize >= 1024 && app.chunkSize <= 16<<20 {
+		return app.chunkSize
+	}
+	return defaultChunkSize
+}
+
+// GetChunkSize returns the active fixed chunk size in bytes.
+func (app *App) GetChunkSize() int {
+	return app.effectiveChunkSize()
+}
+
+// SetChunkSize updates the fixed chunk size in bytes for subsequent sync and benchmark runs.
+func (app *App) SetChunkSize(size int) error {
+	if size < 1024 || size > 16<<20 {
+		return fmt.Errorf("chunk size must be between 1024 bytes and 16 MiB")
+	}
+	app.chunkSize = size
+	return nil
+}
 
 // Chunk that represents a fixed size chunk
 type Chunk struct {
@@ -21,6 +43,7 @@ type Chunk struct {
 
 // Function that divides a file into chunks
 func (app *App) ChunkFile(filePath string) ([]Chunk, error) {
+	activeChunkSize := app.effectiveChunkSize()
 	// An array that store chunks created from a file
 	var fileChunks []Chunk
 
@@ -44,7 +67,7 @@ func (app *App) ChunkFile(filePath string) ([]Chunk, error) {
 		// Ceate a temporary buffer for one fixed-size chunk
 		chunkBuffer := make(
 			[]byte,
-			chunkSize,
+			activeChunkSize,
 		)
 
 		// Read up to 1 KB of data from a file

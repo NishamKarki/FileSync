@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	cryptorand "crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ var coordinatorHTTPClient = &http.Client{
 		MaxIdleConns:        32,
 		MaxIdleConnsPerHost: 8,
 		IdleConnTimeout:     90 * time.Second,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 	},
 	Timeout: 5 * time.Second,
 	CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -86,7 +89,8 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 	defer cancelRequest()
 
 	localIP, registrationError := GetLocalIP()
-	var registeredDevice Device
+	var registeredDevice registrationResponse
+	var handshakeCA *x509.Certificate
 
 	// Continue registration only when the local network address is available.
 	if registrationError == nil {
@@ -111,33 +115,61 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 		} else {
 			// Choose registration for a new client or an explicit re-pairing attempt.
 			requestPath := "/devices/register"
-			// Use heartbeat after this installation has an assigned ID.
-			if registration.DeviceID != "" && pendingPairingCode == "" {
+			if registration.DeviceID != "" && pendingPairingCode == "" && registry.hasValidMTLSClientCert() {
 				requestPath = "/devices/heartbeat"
 				registration.RegistrationKey = ""
 				registration.PairingCode = ""
 			}
+			if requestPath == "/devices/register" || registry.needsPeerCertRenewal() {
+				csrPEM, csrErr := registry.buildCSR(registration.DeviceID, localIP)
+				if csrErr != nil {
+					registrationError = csrErr
+				} else {
+					registration.CSRPEM = csrPEM
+				}
+			}
 
-			registrationError = registry.registryRequest(
-				requestContext,
-				deviceSettings.CoordinatorAddress,
-				requestPath,
-				registration,
-				&registeredDevice,
-			)
-
-			// Retry full registration when a heartbeat identity is no longer known.
-			if registrationError != nil && requestPath == "/devices/heartbeat" && pendingPairingCode != "" {
-				// Restore the secret field required by the registration endpoint.
-				registration.RegistrationKey = deviceSettings.RegistrationKey
-				registration.PairingCode = pendingPairingCode
-				registrationError = registry.registryRequest(
-					requestContext,
-					deviceSettings.CoordinatorAddress,
-					"/devices/register",
-					registration,
-					&registeredDevice,
-				)
+			if registrationError == nil {
+				if requestPath == "/devices/register" {
+					pinnedFP := ""
+					if pendingPairingCode == "" {
+						pinnedFP = deviceSettings.CAFingerprint
+					}
+					registrationError = registry.bootstrapRegistryRequest(
+						requestContext,
+						deviceSettings.CoordinatorAddress,
+						"/devices/register",
+						registration,
+						pinnedFP,
+						&handshakeCA,
+						&registeredDevice,
+					)
+				} else {
+					registrationError = registry.registryRequest(
+						requestContext,
+						deviceSettings.CoordinatorAddress,
+						requestPath,
+						registration,
+						&registeredDevice,
+					)
+					// Retry full registration when a heartbeat identity is no longer known.
+					if registrationError != nil && pendingPairingCode != "" {
+						registration.RegistrationKey = deviceSettings.RegistrationKey
+						registration.PairingCode = pendingPairingCode
+						if csrPEM, csrErr := registry.buildCSR(registration.DeviceID, localIP); csrErr == nil {
+							registration.CSRPEM = csrPEM
+						}
+						registrationError = registry.bootstrapRegistryRequest(
+							requestContext,
+							deviceSettings.CoordinatorAddress,
+							"/devices/register",
+							registration,
+							"",
+							&handshakeCA,
+							&registeredDevice,
+						)
+					}
+				}
 			}
 		}
 	}
@@ -157,23 +189,61 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 	if registrationError == nil && registeredDevice.DeviceID == "" {
 		registrationError = fmt.Errorf("coordinator returned an empty device ID")
 	}
-	// Require a stable coordinator identity on every successful remote response.
+	// Require a stable coordinator identity and CA fingerprint on every remote response.
 	if registrationError == nil && !deviceSettings.Coordinator {
 		if registeredDevice.CoordinatorID == "" {
 			registrationError = &coordinatorError{Code: coordinatorErrorIdentityChanged, Message: "coordinator did not provide a trusted identity", StatusCode: http.StatusUnauthorized}
 		} else if deviceSettings.CoordinatorID != "" && registeredDevice.CoordinatorID != deviceSettings.CoordinatorID && pendingPairingCode == "" {
 			registrationError = &coordinatorError{Code: coordinatorErrorIdentityChanged, Message: "coordinator identity changed; enter a new pairing code to trust it", StatusCode: http.StatusUnauthorized}
+		} else if deviceSettings.CAFingerprint != "" && registeredDevice.CAFingerprint != "" && registeredDevice.CAFingerprint != deviceSettings.CAFingerprint && pendingPairingCode == "" {
+			registrationError = &coordinatorError{Code: coordinatorErrorIdentityChanged, Message: "coordinator CA fingerprint changed; enter a new pairing code to trust it", StatusCode: http.StatusUnauthorized}
+		}
+	}
+	if registrationError == nil && !deviceSettings.Coordinator && handshakeCA != nil {
+		handshakeFP := certFingerprintSHA256(handshakeCA)
+		if registeredDevice.CAFingerprint != "" && handshakeFP != registeredDevice.CAFingerprint {
+			registrationError = &coordinatorError{Code: coordinatorErrorIdentityChanged, Message: "coordinator CA fingerprint does not match TLS handshake", StatusCode: http.StatusUnauthorized}
+		}
+	}
+	if registrationError == nil && !deviceSettings.Coordinator && registeredDevice.PeerCertPEM != "" {
+		expectedFP := registeredDevice.CAFingerprint
+		if expectedFP == "" && handshakeCA != nil {
+			expectedFP = certFingerprintSHA256(handshakeCA)
+		}
+		if certErr := registry.applyClientCertificates(registeredDevice.CACertPEM, expectedFP, registeredDevice.PeerCertPEM, registeredDevice.DeviceID); certErr != nil {
+			registrationError = certErr
+		}
+	}
+	if registrationError == nil {
+		if registeredDevice.AuthorizedDeviceIDs != nil {
+			nextAuth := make(map[string]bool, len(registeredDevice.AuthorizedDeviceIDs))
+			for _, id := range registeredDevice.AuthorizedDeviceIDs {
+				nextAuth[id] = true
+			}
+			registry.authorizedDevices = nextAuth
+		}
+		if registeredDevice.RevokedDeviceIDs != nil {
+			nextRevoked := make(map[string]bool, len(registeredDevice.RevokedDeviceIDs))
+			for _, id := range registeredDevice.RevokedDeviceIDs {
+				nextRevoked[id] = true
+				delete(registry.authorizedDevices, id)
+			}
+			registry.revokedDevices = nextRevoked
 		}
 	}
 
 	// Save newly assigned device and coordinator identities across application restarts.
 	if registrationError == nil && (registeredDevice.DeviceID != registry.settings.DeviceID ||
-		(registeredDevice.CoordinatorID != "" && registeredDevice.CoordinatorID != registry.settings.CoordinatorID)) {
+		(registeredDevice.CoordinatorID != "" && registeredDevice.CoordinatorID != registry.settings.CoordinatorID) ||
+		(registeredDevice.CAFingerprint != "" && registeredDevice.CAFingerprint != registry.settings.CAFingerprint)) {
 		// Copy the current settings before changing the persistent ID.
 		updatedSettings := registry.settings
 		updatedSettings.DeviceID = registeredDevice.DeviceID
 		if registeredDevice.CoordinatorID != "" {
 			updatedSettings.CoordinatorID = registeredDevice.CoordinatorID
+		}
+		if registeredDevice.CAFingerprint != "" {
+			updatedSettings.CAFingerprint = registeredDevice.CAFingerprint
 		}
 
 		// Save the new identity before updating shared memory.
@@ -183,6 +253,11 @@ func (registry *DeviceRegistry) sendHeartbeat() {
 			registrationError = settingsSavingError
 		} else {
 			registry.settings = updatedSettings
+		}
+	}
+	if registrationError == nil && deviceSettings.Coordinator {
+		if pkiErr := registry.ensureCoordinatorPKILocked(); pkiErr != nil {
+			registrationError = pkiErr
 		}
 	}
 	// Clear a submitted pairing code after the coordinator accepts registration.
@@ -272,10 +347,35 @@ func (registry *DeviceRegistry) scheduleRetryLocked() {
 	}
 }
 
+func (registry *DeviceRegistry) bootstrapRegistryRequest(
+	requestContext context.Context,
+	coordinatorAddress string,
+	requestPath string,
+	requestData interface{},
+	expectedFingerprint string,
+	pinnedCertOut **x509.Certificate,
+	result interface{},
+) error {
+	client := bootstrapTLSHTTPClient(expectedFingerprint, 5*time.Second, pinnedCertOut)
+	defer client.CloseIdleConnections()
+	return registry.executeCoordinatorRequest(requestContext, client, coordinatorAddress, requestPath, requestData, result)
+}
+
 // Rabindra Neupane
-// registryRequest sends a request to the selected coordinator.
+// registryRequest sends a mutually authenticated HTTPS request to the coordinator.
 func (registry *DeviceRegistry) registryRequest(
 	requestContext context.Context,
+	coordinatorAddress string,
+	requestPath string,
+	requestData interface{},
+	result interface{},
+) error {
+	return registry.executeCoordinatorRequest(requestContext, registry.CoordinatorHTTPClient(), coordinatorAddress, requestPath, requestData, result)
+}
+
+func (registry *DeviceRegistry) executeCoordinatorRequest(
+	requestContext context.Context,
+	httpClient *http.Client,
 	coordinatorAddress string,
 	requestPath string,
 	requestData interface{},
@@ -297,11 +397,11 @@ func (registry *DeviceRegistry) registryRequest(
 		requestMethod = http.MethodPost
 	}
 
-	// Create the coordinator request with the caller's timeout context.
+	// Create the HTTPS coordinator request with the caller's timeout context.
 	httpRequest, coordinatorRequestCreationError := http.NewRequestWithContext(
 		requestContext,
 		requestMethod,
-		"http://"+coordinatorAddress+requestPath,
+		"https://"+coordinatorAddress+requestPath,
 		requestBody,
 	)
 	if coordinatorRequestCreationError != nil {
@@ -319,9 +419,13 @@ func (registry *DeviceRegistry) registryRequest(
 		return requestSigningError
 	}
 
-	// Send the request through the shared coordinator connection pool.
-	httpResponse, coordinatorRequestError := coordinatorHTTPClient.Do(httpRequest)
+	// Send the request through the selected coordinator client.
+	httpResponse, coordinatorRequestError := httpClient.Do(httpRequest)
 	if coordinatorRequestError != nil {
+		var classified *coordinatorError
+		if errors.As(coordinatorRequestError, &classified) {
+			return classified
+		}
 		return fmt.Errorf("coordinator unavailable: %w", coordinatorRequestError)
 	}
 	defer httpResponse.Body.Close()

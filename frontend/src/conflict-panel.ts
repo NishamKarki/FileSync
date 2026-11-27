@@ -77,15 +77,19 @@ export function setupConflictPanel() {
     });
 
     // conflictNotify.go sends this as soon as a conflict is detected
-    EventsOn('conflict-detected', (fileName: string) => {
-        showConflictNotification(fileName);
-        void refreshConflictCount();
-        // If the panel is already open, redraw it so the new conflict shows up
-        if (conflictOverlay && !conflictOverlay.hidden) void renderConflictList();
-    });
+    if ((window as { runtime?: unknown }).runtime) {
+        EventsOn('conflict-detected', (fileName: string) => {
+            showConflictNotification(fileName);
+            void refreshConflictCount();
+            // If the panel is already open, redraw it so the new conflict shows up
+            if (conflictOverlay && !conflictOverlay.hidden) void renderConflictList();
+        });
+    }
 
     // Conflicts saved before the app was started should still show in the count
-    void refreshConflictCount();
+    if ((window as { go?: unknown }).go) {
+        void refreshConflictCount();
+    }
 }
 
 async function openConflictPanel() {
@@ -112,11 +116,17 @@ function closeConflictPanel() {
 function updateConflictsButton(openCount: number) {
     // Stop when the main conflict button is unavailable.
     if (!conflictsButton) return;
-    // Keep the sidebar icon and add a compact live count badge when needed.
+    // Keep the sidebar SVG icon and add a compact live count badge when needed.
     conflictsButton.replaceChildren();
-    const icon = document.createElement('span');
-    icon.className = 'nav-icon';
-    icon.textContent = '△';
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 16 16');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.classList.add('nav-icon');
+    for (const pathData of ['M8 2.5L14 13H2L8 2.5z', 'M8 6.5v3', 'M8 11.4v.2']) {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', pathData);
+        icon.appendChild(path);
+    }
     const label = document.createElement('span');
     label.textContent = 'Conflicts';
     conflictsButton.append(icon, label);

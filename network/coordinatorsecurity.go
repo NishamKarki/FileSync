@@ -161,12 +161,22 @@ func (registry *DeviceRegistry) rememberRequestNonce(principal string, nonce str
 }
 
 // Rabindra Neupane
-// authenticateRegisteredRequest verifies a signed request from an existing device.
+// authenticateRegisteredRequest verifies a signed request from an existing device
+// and requires a matching, authorized mTLS client certificate when served over TLS.
 func (registry *DeviceRegistry) authenticateRegisteredRequest(request *http.Request, body []byte, expectedDeviceID string) (string, error) {
 	// Require the authenticated header identity to match body data when supplied.
 	deviceID := request.Header.Get(deviceIDHeader)
 	if deviceID == "" || (expectedDeviceID != "" && deviceID != expectedDeviceID) {
 		return "", fmt.Errorf("registered device identity does not match the request")
+	}
+	// When served over TLS, bind the request to the verified mTLS client certificate.
+	if certDeviceID, ok := VerifiedPeerDeviceID(request); !ok || certDeviceID != deviceID {
+		return "", &coordinatorError{Code: coordinatorErrorAuthentication, Message: "valid mutual TLS client certificate matching deviceId is required", StatusCode: http.StatusUnauthorized}
+	}
+	// Reject explicitly revoked devices immediately.
+	var revokedCount int
+	if err := registry.database.QueryRowContext(request.Context(), "SELECT COUNT(*) FROM revoked_devices WHERE device_id=?", deviceID).Scan(&revokedCount); err == nil && revokedCount > 0 {
+		return "", &coordinatorError{Code: coordinatorErrorDeviceRevoked, Message: "device registration was removed; pair again", StatusCode: http.StatusUnauthorized}
 	}
 	// Find the secret assigned to this registered device.
 	var registrationKey string
@@ -238,7 +248,8 @@ func (registry *DeviceRegistry) recordPairingFailureLocked(deviceIP string) (int
 }
 
 // Rabindra Neupane
-// StartPairing opens a short single-use registration window on the coordinator.
+// StartPairing opens a short registration window on the coordinator so one or
+// more clients can join with the generated code before it expires.
 func (registry *DeviceRegistry) StartPairing() (PairingStatus, error) {
 	// Create the code before locking shared coordinator state.
 	pairingCode, pairingCodeGenerationError := newPairingCode()
@@ -271,36 +282,118 @@ func (registry *DeviceRegistry) GetPairingStatus() PairingStatus {
 }
 
 // Rabindra Neupane
-// RevokeDevice removes a registered client so its secret can no longer authenticate.
+// RevokeDevice removes a registered client so its secret and mTLS certificate
+// can no longer authenticate with the coordinator or registered peers.
 func (registry *DeviceRegistry) RevokeDevice(deviceID string) error {
 	// Lock coordinator state while validating and deleting the registration.
 	registry.mutex.Lock()
-	defer registry.mutex.Unlock()
 	if !registry.settings.Coordinator {
+		registry.mutex.Unlock()
 		return fmt.Errorf("only the coordinator can remove registered devices")
 	}
 	if deviceID == "" || deviceID == registry.settings.DeviceID {
+		registry.mutex.Unlock()
 		return fmt.Errorf("select a client device to remove")
 	}
-	// Delete registration and chunk locations together so no stale source remains.
+	// Delete registration, remove chunk locations, and record revocation together.
 	databaseTransaction, transactionStartError := registry.database.Begin()
 	if transactionStartError != nil {
+		registry.mutex.Unlock()
 		return transactionStartError
 	}
-	defer databaseTransaction.Rollback()
 	if _, chunkLocationDeletionError := databaseTransaction.Exec("DELETE FROM chunk_locations WHERE device_id=?", deviceID); chunkLocationDeletionError != nil {
+		databaseTransaction.Rollback()
+		registry.mutex.Unlock()
 		return chunkLocationDeletionError
 	}
 	deletionResult, deviceDeletionError := databaseTransaction.Exec("DELETE FROM device_registry WHERE device_id=?", deviceID)
 	if deviceDeletionError != nil {
+		databaseTransaction.Rollback()
+		registry.mutex.Unlock()
 		return deviceDeletionError
 	}
 	deletedRows, deletedRowReadingError := deletionResult.RowsAffected()
 	if deletedRowReadingError != nil {
+		databaseTransaction.Rollback()
+		registry.mutex.Unlock()
 		return deletedRowReadingError
 	}
 	if deletedRows == 0 {
+		databaseTransaction.Rollback()
+		registry.mutex.Unlock()
 		return fmt.Errorf("registered device was not found")
 	}
-	return databaseTransaction.Commit()
+	if _, revokeInsertErr := databaseTransaction.Exec("INSERT OR REPLACE INTO revoked_devices (device_id, revoked_at) VALUES (?, ?)", deviceID, time.Now().UnixNano()); revokeInsertErr != nil {
+		databaseTransaction.Rollback()
+		registry.mutex.Unlock()
+		return revokeInsertErr
+	}
+	if commitErr := databaseTransaction.Commit(); commitErr != nil {
+		registry.mutex.Unlock()
+		return commitErr
+	}
+	if registry.revokedDevices == nil {
+		registry.revokedDevices = make(map[string]bool)
+	}
+	registry.revokedDevices[deviceID] = true
+	delete(registry.authorizedDevices, deviceID)
+	authorizedIDs, revokedIDs := registry.loadAuthorizationSnapshotLocked()
+	peersToNotify := registry.onlinePeerTargetsLocked()
+	registry.mutex.Unlock()
+
+	registry.pushRevocationToPeers(peersToNotify, authorizedIDs, revokedIDs)
+	return nil
+}
+
+// IsDeviceAuthorized reports whether deviceID is currently an active, non-revoked peer.
+func (registry *DeviceRegistry) IsDeviceAuthorized(deviceID string) bool {
+	if registry == nil || !isHexToken(deviceID, 16) {
+		return false
+	}
+	registry.mutex.Lock()
+	isCoordinator := registry.settings.Coordinator
+	registered := registry.registered
+	revoked := registry.revokedDevices[deviceID]
+	authorized := registry.authorizedDevices[deviceID]
+	registry.mutex.Unlock()
+
+	if revoked {
+		return false
+	}
+	if isCoordinator {
+		var count int
+		if err := registry.database.QueryRow("SELECT COUNT(*) FROM revoked_devices WHERE device_id=?", deviceID).Scan(&count); err == nil && count > 0 {
+			return false
+		}
+		var activeCount int
+		if err := registry.database.QueryRow("SELECT COUNT(*) FROM device_registry WHERE device_id=?", deviceID).Scan(&activeCount); err != nil {
+			return false
+		}
+		return activeCount > 0
+	}
+	if !registered {
+		return false
+	}
+	if authorized {
+		return true
+	}
+	// Refresh once from the coordinator in case a new peer registered since our last heartbeat.
+	devices, err := registry.Devices()
+	if err != nil {
+		return false
+	}
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	if registry.revokedDevices[deviceID] {
+		return false
+	}
+	if registry.authorizedDevices == nil {
+		registry.authorizedDevices = make(map[string]bool)
+	}
+	for _, dev := range devices {
+		if dev.DeviceID != "" && !registry.revokedDevices[dev.DeviceID] {
+			registry.authorizedDevices[dev.DeviceID] = true
+		}
+	}
+	return registry.authorizedDevices[deviceID]
 }

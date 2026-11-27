@@ -4,6 +4,9 @@ package network
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,13 +20,14 @@ import (
 )
 
 // Santosh Tripathee
-// Reuse TCP connections so large transfers do not exhaust local network ports.
+// Reuse TCP/TLS connections so large transfers do not exhaust local network ports.
 var transferHTTPClient = &http.Client{
 	Transport: &http.Transport{
 		Proxy:               nil,
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 16,
 		IdleConnTimeout:     90 * time.Second,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 	},
 	Timeout: 2 * time.Minute,
 	CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -31,10 +35,17 @@ var transferHTTPClient = &http.Client{
 	},
 }
 
+func selectTransferClient(clients []*http.Client) *http.Client {
+	if len(clients) > 0 && clients[0] != nil {
+		return clients[0]
+	}
+	return transferHTTPClient
+}
+
 // Rabindra Neupane
 // StartChunkTransfer creates an isolated receiver snapshot and returns the
 // chunks needed there. Existing comparison-only requests remain read-only.
-func StartChunkTransfer(requestContext context.Context, deviceAddress string, metadata FileMetadata) (*TransferPlan, error) {
+func StartChunkTransfer(requestContext context.Context, deviceAddress string, metadata FileMetadata, clients ...*http.Client) (*TransferPlan, error) {
 	// Validate the metadata before sending it to another device.
 	if metadataValidationError := validateFileMetadata(metadata); metadataValidationError != nil {
 		return nil, metadataValidationError
@@ -53,7 +64,8 @@ func StartChunkTransfer(requestContext context.Context, deviceAddress string, me
 	defer cancelStart()
 	// Send the metadata and read the receiver's transfer plan.
 	var transferPlan TransferPlan
-	transferStartRequestError := transferRequest(startContext, deviceAddress, "/transfer/start", "application/json", requestBody, &transferPlan)
+	httpClient := selectTransferClient(clients)
+	transferStartRequestError := transferRequestWithClient(startContext, httpClient, deviceAddress, "/transfer/start", "application/json", requestBody, &transferPlan)
 	if transferStartRequestError != nil {
 		return nil, transferStartRequestError
 	}
@@ -74,24 +86,39 @@ func StartChunkTransfer(requestContext context.Context, deviceAddress string, me
 	return &transferPlan, nil
 }
 
+// httpStatusError captures a non-200 HTTP response so transient or hash-mismatch
+// chunk uploads can be retried by SendTransferChunk.
+type httpStatusError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *httpStatusError) Error() string {
+	return e.Message
+}
+
 // Rabindra Neupane
 // SendTransferChunk stores one chunk in the transfer folder without reconstructing.
-func SendTransferChunk(requestContext context.Context, deviceAddress, transferID string, chunkIndex int, chunkData []byte) error {
+func SendTransferChunk(requestContext context.Context, deviceAddress, transferID string, chunkIndex int, chunkData []byte, clients ...*http.Client) error {
 	// Create query values that identify the transfer and chunk position.
 	queryParameters := url.Values{"transferId": {transferID}, "chunkIndex": {fmt.Sprint(chunkIndex)}}
 	requestPath := "/transfer/chunk?" + queryParameters.Encode()
-	// Retry only transient network failures; the same transfer ID and index make this safe.
+	httpClient := selectTransferClient(clients)
+	// Retry transient network failures, server errors, or in-transit chunk corruption (400).
 	var lastChunkSendingError error
 	for attempt := 0; attempt < 3; attempt++ {
 		// Bound one chunk attempt without shortening the overall transfer context.
 		chunkContext, cancelChunk := context.WithTimeout(requestContext, 15*time.Second)
-		lastChunkSendingError = transferRequest(chunkContext, deviceAddress, requestPath, "application/octet-stream", chunkData, nil)
+		lastChunkSendingError = transferRequestWithClient(chunkContext, httpClient, deviceAddress, requestPath, "application/octet-stream", chunkData, nil)
 		cancelChunk()
 		if lastChunkSendingError == nil {
 			return nil
 		}
 		var networkError net.Error
-		if !errors.As(lastChunkSendingError, &networkError) {
+		var statusError *httpStatusError
+		retryable := errors.As(lastChunkSendingError, &networkError) ||
+			(errors.As(lastChunkSendingError, &statusError) && (statusError.StatusCode == http.StatusBadRequest || statusError.StatusCode >= http.StatusInternalServerError))
+		if !retryable {
 			return lastChunkSendingError
 		}
 		if attempt == 2 {
@@ -112,7 +139,7 @@ func SendTransferChunk(requestContext context.Context, deviceAddress, transferID
 
 // Rabindra Neupane
 // CompleteChunkTransfer succeeds only after the receiver verifies and reconstructs.
-func CompleteChunkTransfer(requestContext context.Context, deviceAddress, transferID, expectedHash string) error {
+func CompleteChunkTransfer(requestContext context.Context, deviceAddress, transferID, expectedHash string, clients ...*http.Client) error {
 	// Create the completion request for the active transfer.
 	requestBody, completionRequestEncodingError := json.Marshal(struct {
 		TransferID string `json:"transferId"`
@@ -125,7 +152,8 @@ func CompleteChunkTransfer(requestContext context.Context, deviceAddress, transf
 	defer cancelCompletion()
 	// Send the completion request and decode the receiver's decision.
 	var completionResult TransferCompletion
-	transferCompletionRequestError := transferRequest(completionContext, deviceAddress, "/transfer/complete", "application/json", requestBody, &completionResult)
+	httpClient := selectTransferClient(clients)
+	transferCompletionRequestError := transferRequestWithClient(completionContext, httpClient, deviceAddress, "/transfer/complete", "application/json", requestBody, &completionResult)
 	if transferCompletionRequestError != nil {
 		return transferCompletionRequestError
 	}
@@ -145,10 +173,7 @@ func CompleteChunkTransfer(requestContext context.Context, deviceAddress, transf
 	return nil
 }
 
-// Rabindra Neupane
-// transferRequest sends one bounded transfer request and validates one optional
-// JSON response. Redirects are disabled so data cannot be sent to another host.
-func transferRequest(requestContext context.Context, deviceAddress, requestPath, contentType string, requestBody []byte, responseResult interface{}) error {
+func transferRequestWithClient(requestContext context.Context, httpClient *http.Client, deviceAddress, requestPath, contentType string, requestBody []byte, responseResult interface{}) error {
 	// Select a larger limit only for raw chunk data.
 	requestSizeLimit := 8 << 20
 	if contentType == "application/octet-stream" {
@@ -158,15 +183,15 @@ func transferRequest(requestContext context.Context, deviceAddress, requestPath,
 	if len(requestBody) > requestSizeLimit {
 		return fmt.Errorf("transfer request exceeds size limit")
 	}
-	// Create the POST request for the selected transfer endpoint.
-	httpRequest, transferRequestCreationError := http.NewRequestWithContext(requestContext, http.MethodPost, "http://"+deviceAddress+requestPath, bytes.NewReader(requestBody))
+	// Create the HTTPS POST request for the selected transfer endpoint.
+	httpRequest, transferRequestCreationError := http.NewRequestWithContext(requestContext, http.MethodPost, "https://"+deviceAddress+requestPath, bytes.NewReader(requestBody))
 	if transferRequestCreationError != nil {
 		return transferRequestCreationError
 	}
-	// Set the body type before using the shared direct transfer client.
+	// Set the body type before using the selected HTTPS transfer client.
 	httpRequest.Header.Set("Content-Type", contentType)
 	// Send the transfer request to the receiver.
-	httpResponse, transferRequestSendingError := transferHTTPClient.Do(httpRequest)
+	httpResponse, transferRequestSendingError := httpClient.Do(httpRequest)
 	if transferRequestSendingError != nil {
 		return fmt.Errorf("transfer request: %w", transferRequestSendingError)
 	}
@@ -191,9 +216,9 @@ func transferRequest(requestContext context.Context, deviceAddress, requestPath,
 		}
 		// Return the HTTP status alone when no details were provided.
 		if errorMessage == "" {
-			return fmt.Errorf("transfer request failed: %s", httpResponse.Status)
+			return &httpStatusError{StatusCode: httpResponse.StatusCode, Message: fmt.Sprintf("transfer request failed: %s", httpResponse.Status)}
 		}
-		return fmt.Errorf("transfer request failed: %s: %s", httpResponse.Status, errorMessage)
+		return &httpStatusError{StatusCode: httpResponse.StatusCode, Message: fmt.Sprintf("transfer request failed: %s: %s", httpResponse.Status, errorMessage)}
 	}
 	// Return when the caller does not expect a JSON response.
 	if responseResult == nil {
@@ -223,21 +248,19 @@ func transferRequest(requestContext context.Context, deviceAddress, requestPath,
 }
 
 // Rabindra Neupane
-// PingDevice checks whether another FileSync device is reachable and returns
-// the identity information supplied by its ping endpoint.
-func PingDevice(deviceAddress string) (*PingResponse, error) {
-	// Create a direct transport so local requests do not use a proxy.
-	httpTransport := &http.Transport{
-		Proxy: nil,
+// PingDevice checks whether another FileSync device is reachable over HTTPS
+// and returns the public identity and CA fingerprint supplied by /ping.
+func PingDevice(deviceAddress string, clients ...*http.Client) (*PingResponse, error) {
+	var syncClient *http.Client
+	if len(clients) > 0 && clients[0] != nil {
+		syncClient = clients[0]
+	} else {
+		syncClient = bootstrapTLSHTTPClient("", 5*time.Second, nil)
+		defer syncClient.CloseIdleConnections()
 	}
 
-	// Limit the request so an offline device does not block discovery.
-	syncClient := http.Client{
-		Transport: httpTransport,
-		Timeout:   5 * time.Second,
-	}
-	// Send the request to the device's ping endpoint.
-	httpResponse, pingRequestError := syncClient.Get("http://" + deviceAddress + "/ping")
+	// Send the request to the device's HTTPS ping endpoint.
+	httpResponse, pingRequestError := syncClient.Get("https://" + deviceAddress + "/ping")
 	if pingRequestError != nil {
 		return nil, pingRequestError
 	}
@@ -258,8 +281,8 @@ func PingDevice(deviceAddress string) (*PingResponse, error) {
 }
 
 // Rabindra Neupane
-// Whole-file comparison keeps one multipart payload but shares conflict handling.
-func SendFile(requestContext context.Context, deviceAddress string, metadata FileMetadata, fileData []byte) error {
+// Whole-file comparison keeps one multipart payload over mTLS and shares conflict handling.
+func SendFile(requestContext context.Context, deviceAddress string, metadata FileMetadata, fileData []byte, clients ...*http.Client) error {
 	// Validate the same metadata used by incremental transfers.
 	if metadataValidationError := validateFileMetadata(metadata); metadataValidationError != nil {
 		return metadataValidationError
@@ -295,17 +318,15 @@ func SendFile(requestContext context.Context, deviceAddress string, metadata Fil
 		return multipartClosingError
 	}
 
-	// Create the HTTP request for the receiver's whole-file endpoint.
-	httpRequest, fileRequestCreationError := http.NewRequestWithContext(requestContext, http.MethodPost, "http://"+deviceAddress+"/file", &requestBody)
+	// Create the HTTPS request for the receiver's whole-file endpoint.
+	httpRequest, fileRequestCreationError := http.NewRequestWithContext(requestContext, http.MethodPost, "https://"+deviceAddress+"/file", &requestBody)
 	if fileRequestCreationError != nil {
 		return fileRequestCreationError
 	}
 
-	// Set the multipart content type and create a client without proxy redirects.
+	// Set the multipart content type and send through the configured mTLS client.
 	httpRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
-	httpClient := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 30 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	defer httpClient.CloseIdleConnections()
+	httpClient := selectTransferClient(clients)
 
 	// Send the request to the receiving device.
 	httpResponse, fileRequestSendingError := httpClient.Do(httpRequest)
@@ -343,4 +364,63 @@ func SendFile(requestContext context.Context, deviceAddress string, metadata Fil
 
 	// Return success after the receiver verifies the complete file.
 	return nil
+}
+
+// FetchFileMetadata requests the latest file metadata from a peer over mTLS for pull synchronization.
+func FetchFileMetadata(requestContext context.Context, deviceAddress, fileName string, clients ...*http.Client) (FileMetadata, error) {
+	requestURL := "https://" + deviceAddress + "/files/metadata?name=" + url.QueryEscape(fileName)
+	httpRequest, err := http.NewRequestWithContext(requestContext, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return FileMetadata{}, err
+	}
+	httpResponse, err := selectTransferClient(clients).Do(httpRequest)
+	if err != nil {
+		return FileMetadata{}, err
+	}
+	defer httpResponse.Body.Close()
+	if httpResponse.StatusCode != http.StatusOK {
+		details, _ := io.ReadAll(io.LimitReader(httpResponse.Body, 4096))
+		return FileMetadata{}, fmt.Errorf("metadata request failed: %s: %s", httpResponse.Status, strings.TrimSpace(string(details)))
+	}
+	var metadata FileMetadata
+	if err := json.NewDecoder(io.LimitReader(httpResponse.Body, 8<<20)).Decode(&metadata); err != nil {
+		return FileMetadata{}, err
+	}
+	if err := validateFileMetadata(metadata); err != nil {
+		return FileMetadata{}, err
+	}
+	return metadata, nil
+}
+
+// FetchChunkFromAddress downloads and SHA-256 verifies one chunk from a peer over mTLS.
+func FetchChunkFromAddress(requestContext context.Context, deviceAddress, chunkHash string, clients ...*http.Client) ([]byte, error) {
+	if !validLocationHash(chunkHash) {
+		return nil, fmt.Errorf("invalid chunk hash")
+	}
+	requestURL := "https://" + deviceAddress + "/chunks/data?hash=" + url.QueryEscape(chunkHash)
+	httpRequest, err := http.NewRequestWithContext(requestContext, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpResponse, err := selectTransferClient(clients).Do(httpRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer httpResponse.Body.Close()
+	if httpResponse.StatusCode != http.StatusOK {
+		details, _ := io.ReadAll(io.LimitReader(httpResponse.Body, 4096))
+		return nil, fmt.Errorf("chunk fetch failed: %s: %s", httpResponse.Status, strings.TrimSpace(string(details)))
+	}
+	data, err := io.ReadAll(io.LimitReader(httpResponse.Body, maxTransferChunkSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxTransferChunkSize {
+		return nil, fmt.Errorf("chunk exceeds transfer limit")
+	}
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) != chunkHash {
+		return nil, fmt.Errorf("downloaded chunk SHA-256 mismatch")
+	}
+	return data, nil
 }

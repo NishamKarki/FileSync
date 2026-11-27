@@ -8,13 +8,18 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // // App stores the shared application state used by the FileSync backend.
@@ -25,12 +30,17 @@ type App struct {
 	chunkStoragePath       string            // Path where the generated file chunks are store
 	reconstructedFilesPath string
 	db                     *sql.DB
+	chunkSize              int                    // Active fixed chunk size in bytes (defaults to 4 KiB)
+	autoSyncEnabled        bool                   // When true, file watcher pushes changes automatically
+	autoSyncTarget         string                 // Peer address or "all" for automatic sync
+	autoSyncMutex          sync.RWMutex           // Protects autoSyncEnabled and autoSyncTarget
 	fileTimers             map[string]*time.Timer // Stores tier for files that are being modified
 	timerMutex             sync.Mutex             // Protects fileTimer from being accessed by multiple go routine at the same time
 	transferMutex          sync.Mutex             // Prevent overlapping outgoing transfers from this app.
 	fileProcessingMutex    sync.Mutex             // Serialize watcher processing with remote apply.
 	remoteFileHashes       map[string]string      // Verified remote contents, guarded by fileProcessingMutex.
 	deviceRegistry         *network.DeviceRegistry
+	chunkIndex             *network.ChunkFileIndex
 	networkCancel          context.CancelFunc
 }
 
@@ -92,30 +102,77 @@ func (app *App) sendPreparedFile(address, fileName string, whole bool) (syncResu
 		requestContext = context.Background()
 	}
 	result := &SyncResult{TotalChunks: len(chunks)}
+	transferClient := app.deviceRegistry.TransferHTTPClient()
 	if whole {
 		data := make([]byte, 0, metadata.FileSize)
 		for _, chunk := range chunks {
 			data = append(data, chunk.Data...)
 		}
-		fileSendingError := network.SendFile(requestContext, address, metadata, data)
+		fileSendingError := network.SendFile(requestContext, address, metadata, data, transferClient)
 		result.ChunksSent, result.ChunkBytesSent = len(chunks), int64(len(data))
 		return app.finishOutgoingSync(fileName, metadata, result, fileSendingError)
 	}
-	transferPlan, transferStartError := network.StartChunkTransfer(requestContext, address, metadata)
+	transferPlan, transferStartError := network.StartChunkTransfer(requestContext, address, metadata, transferClient)
 	if transferStartError != nil {
 		return nil, fmt.Errorf("start incremental sync: %w", transferStartError)
 	}
-	for _, index := range transferPlan.NeededChunks {
-		chunk := chunks[index]
-		if chunkSendingError := network.SendTransferChunk(requestContext, address, transferPlan.TransferID, index, chunk.Data); chunkSendingError != nil {
-			return nil, fmt.Errorf("send chunk %d: %w", index, chunkSendingError)
-		}
-		result.ChunksSent++
-		result.ChunkBytesSent += int64(len(chunk.Data))
+	if chunkSendingError := sendNeededChunks(requestContext, transferClient, address, transferPlan.TransferID, transferPlan.NeededChunks, chunks, result); chunkSendingError != nil {
+		return nil, chunkSendingError
 	}
 	// Even an unchanged or empty file needs explicit receiver verification.
-	transferCompletionError := network.CompleteChunkTransfer(requestContext, address, transferPlan.TransferID, metadata.FileHash)
+	transferCompletionError := network.CompleteChunkTransfer(requestContext, address, transferPlan.TransferID, metadata.FileHash, transferClient)
 	return app.finishOutgoingSync(fileName, metadata, result, transferCompletionError)
+}
+
+func sendNeededChunks(requestContext context.Context, transferClient *http.Client, address, transferID string, needed []int, chunks []Chunk, result *SyncResult) error {
+	if len(needed) == 0 {
+		return nil
+	}
+	workers := 6
+	if len(needed) < workers {
+		workers = len(needed)
+	}
+	uploadCtx, cancelUploads := context.WithCancel(requestContext)
+	defer cancelUploads()
+
+	jobs := make(chan int, len(needed))
+	for _, index := range needed {
+		jobs <- index
+	}
+	close(jobs)
+
+	var sentCount atomic.Int64
+	var sentBytes atomic.Int64
+	var firstErr error
+	var errMutex sync.Mutex
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				if uploadCtx.Err() != nil {
+					return
+				}
+				chunk := chunks[index]
+				if err := network.SendTransferChunk(uploadCtx, address, transferID, index, chunk.Data, transferClient); err != nil {
+					errMutex.Lock()
+					if firstErr == nil {
+						firstErr = fmt.Errorf("send chunk %d: %w", index, err)
+						cancelUploads()
+					}
+					errMutex.Unlock()
+					return
+				}
+				sentCount.Add(1)
+				sentBytes.Add(int64(len(chunk.Data)))
+			}
+		}()
+	}
+	wg.Wait()
+	result.ChunksSent = int(sentCount.Load())
+	result.ChunkBytesSent = sentBytes.Load()
+	return firstErr
 }
 
 // Rabindra Neupane
@@ -207,8 +264,9 @@ func (app *App) prepareFileForSync(fileName string) ([]Chunk, network.FileMetada
 // metadataForSync reads Santosh's version records and creates network metadata.
 // Serialized preparation records the current content before this read.
 func (app *App) metadataForSync(fileName string, chunks []Chunk) (network.FileMetadata, error) {
+	activeChunkSize := int64(app.effectiveChunkSize())
 	// Create metadata with ordered space for every current chunk hash.
-	metadata := network.FileMetadata{FileID: fileName, FileName: fileName, ChunkSize: chunkSize, ChunkHashes: make([]string, len(chunks))}
+	metadata := network.FileMetadata{FileID: fileName, FileName: fileName, ChunkSize: activeChunkSize, ChunkHashes: make([]string, len(chunks))}
 	hasher := sha256.New()
 	for index, chunk := range chunks {
 		metadata.ChunkHashes[index] = chunk.Hash
@@ -233,29 +291,14 @@ func (app *App) metadataForSync(fileName string, chunks []Chunk) (network.FileMe
 	}
 	defer databaseTransaction.Rollback()
 	var versionID, recordedSize int64
-	var base sql.NullInt64
-	versionReadingError := databaseTransaction.QueryRow(`SELECT v.id, v.version_number, v.based_on_version, f.size
+	versionReadingError := databaseTransaction.QueryRow(`SELECT v.id, v.version_number, f.size
 		FROM files f JOIN file_versions v ON v.file_id = f.id AND v.version_number = f.current_version
-		WHERE f.id = ? ORDER BY v.id DESC LIMIT 1`, fileName).Scan(&versionID, &metadata.Version, &base, &recordedSize)
+		WHERE f.id = ? ORDER BY v.id DESC LIMIT 1`, fileName).Scan(&versionID, &metadata.Version, &recordedSize)
 	if versionReadingError == sql.ErrNoRows {
 		return metadata, fmt.Errorf("file is still being processed; wait a moment and try Sync Now again")
 	}
 	if versionReadingError != nil {
 		return metadata, fmt.Errorf("read file version: %w", versionReadingError)
-	}
-	if base.Valid {
-		value := int(base.Int64)
-		metadata.BaseVersion = &value
-		baseChunkHashes, baseChunkReadingError := loadBaseChunkHashes(databaseTransaction, fileName, value)
-		if baseChunkReadingError != nil {
-			return metadata, fmt.Errorf("read base version identity: %w", baseChunkReadingError)
-		}
-		metadata.BaseChunkHashes = baseChunkHashes
-		baseRevisions, revisionHistoryReadingError := loadBaseRevisionHistory(databaseTransaction, fileName, value)
-		if revisionHistoryReadingError != nil {
-			return metadata, fmt.Errorf("read base revision history: %w", revisionHistoryReadingError)
-		}
-		metadata.BaseRevisions = baseRevisions
 	}
 	chunkRows, chunkQueryError := databaseTransaction.Query("SELECT chunk_index, chunk_hash FROM chunks WHERE file_version_id = ? ORDER BY chunk_index", versionID)
 	if chunkQueryError != nil {
@@ -296,8 +339,13 @@ func (app *App) startup(ctx context.Context) {
 	// Save the Wails context used by dialogs and frontend events.
 	app.ctx = ctx
 
-	// Initializes the map that is used to manage file processing timers.
+	// Initialize the map that is used to manage file processing timers.
 	app.fileTimers = make(map[string]*time.Timer)
+	if envChunk := strings.TrimSpace(os.Getenv("FILESYNC_CHUNK_SIZE")); envChunk != "" {
+		if parsed, parseErr := strconv.Atoi(envChunk); parseErr == nil && parsed >= 1024 && parsed <= 16<<20 {
+			app.chunkSize = parsed
+		}
+	}
 
 	// Get the project's current directory
 	getProjectDirectory, projectDirectoryError := os.Getwd()
@@ -331,6 +379,7 @@ func (app *App) startup(ctx context.Context) {
 
 	// Create "File Chunks" folder, if it does not exist
 	os.MkdirAll(app.chunkStoragePath, 0755)
+	app.chunkIndex = network.NewChunkFileIndex(app.chunkStoragePath)
 
 	// Create path used to store reconstructed files.
 	app.reconstructedFilesPath = filepath.Join(
@@ -356,6 +405,9 @@ func (app *App) startup(ctx context.Context) {
 	app.networkCancel = cancel
 	deviceRegistry, deviceRegistryOpeningError := network.OpenDeviceRegistry(serviceCtx, database, getProjectDirectory, 8080)
 	app.deviceRegistry = deviceRegistry
+	if deviceRegistry != nil {
+		deviceRegistry.SetChunkFileIndex(app.chunkIndex)
+	}
 	if deviceRegistryOpeningError != nil {
 		fmt.Println("Device registration setup failed:", deviceRegistryOpeningError)
 	}
@@ -365,7 +417,7 @@ func (app *App) startup(ctx context.Context) {
 
 	// Start the local HTTP Server
 	// Reconstruction implementation: Nisham Karki
-	go network.StartServer(serviceCtx, "8080", app.completeIncomingTransfer, app.deviceRegistry, app.scheduleLocalChunkInventoryReport)
+	go network.StartServer(serviceCtx, "8080", app.completeIncomingTransfer, app.deviceRegistry, app.scheduleLocalChunkInventoryReport, app.prepareFileMetadataForPeer)
 }
 
 // Rabindra Neupane
@@ -475,4 +527,216 @@ func (app *App) DiscoverDevices() []network.Device {
 func (app *App) SendFile(address string, fileName string) (*SyncResult, error) {
 	// Start the whole-file benchmark workflow.
 	return app.sendPreparedFile(address, fileName, true)
+}
+
+// SetAutoSync enables or disables automatic synchronization when files change.
+func (app *App) SetAutoSync(enabled bool, targetAddress string) {
+	app.autoSyncMutex.Lock()
+	app.autoSyncEnabled = enabled
+	app.autoSyncTarget = strings.TrimSpace(targetAddress)
+	app.autoSyncMutex.Unlock()
+}
+
+// GetAutoSync reports whether automatic synchronization on file changes is enabled.
+func (app *App) GetAutoSync() bool {
+	app.autoSyncMutex.RLock()
+	defer app.autoSyncMutex.RUnlock()
+	return app.autoSyncEnabled
+}
+
+func (app *App) autoSyncChangedFile(fileName string) {
+	app.autoSyncMutex.RLock()
+	enabled := app.autoSyncEnabled
+	target := app.autoSyncTarget
+	app.autoSyncMutex.RUnlock()
+	if !enabled || app.deviceRegistry == nil || !app.deviceRegistry.Status().Registered {
+		return
+	}
+
+	var targets []string
+	if target == "" || target == "all" {
+		devices, err := app.deviceRegistry.Devices()
+		if err != nil {
+			return
+		}
+		ownID := app.deviceRegistry.Status().DeviceID
+		for _, device := range devices {
+			if device.DeviceOnline && device.DeviceID != ownID {
+				targets = append(targets, net.JoinHostPort(device.DeviceIP, strconv.Itoa(device.DevicePort)))
+			}
+		}
+	} else {
+		targets = []string{target}
+	}
+
+	for _, addr := range targets {
+		res, err := app.SyncFile(addr, fileName)
+		if app.ctx != nil && app.ctx.Value("events") != nil {
+			if err != nil {
+				runtime.EventsEmit(app.ctx, "auto-sync-result", fmt.Sprintf("Auto-sync %s to %s failed: %v", fileName, addr, err))
+			} else if res.ConflictFile != "" {
+				runtime.EventsEmit(app.ctx, "auto-sync-result", fmt.Sprintf("Auto-sync %s to %s: conflict (%s)", fileName, addr, res.ConflictFile))
+			} else if res.KeepLocal {
+				runtime.EventsEmit(app.ctx, "auto-sync-result", fmt.Sprintf("Auto-sync %s to %s: peer has newer version", fileName, addr))
+			} else {
+				runtime.EventsEmit(app.ctx, "auto-sync-result", fmt.Sprintf("Auto-sync %s to %s: %d/%d chunks (%d bytes)", fileName, addr, res.ChunksSent, res.TotalChunks, res.ChunkBytesSent))
+			}
+		}
+	}
+}
+
+func (app *App) prepareFileMetadataForPeer(fileName string) (network.FileMetadata, error) {
+	if fileName == "" || fileName == "." || fileName == ".." || strings.ContainsAny(fileName, "/\\:\x00") {
+		return network.FileMetadata{}, fmt.Errorf("invalid file name")
+	}
+	app.fileProcessingMutex.Lock()
+	defer app.fileProcessingMutex.Unlock()
+	_, metadata, err := app.prepareFileForSync(fileName)
+	return metadata, err
+}
+
+// PullFile downloads only missing or changed chunks for fileName from a peer
+// (with coordinator peer fallback) and applies the verified version locally.
+func (app *App) PullFile(address string, fileName string) (*SyncResult, error) {
+	if !app.transferMutex.TryLock() {
+		return nil, fmt.Errorf("another file transfer is already running")
+	}
+	defer app.transferMutex.Unlock()
+	if fileName == "" || fileName == "." || fileName == ".." || strings.ContainsAny(fileName, "/\\:\x00") {
+		return nil, fmt.Errorf("select a valid file name")
+	}
+	requestContext := app.ctx
+	if requestContext == nil {
+		requestContext = context.Background()
+	}
+	transferClient := app.deviceRegistry.TransferHTTPClient()
+	chunkClient := app.deviceRegistry.ChunkRetrievalHTTPClient()
+	metadata, err := network.FetchFileMetadata(requestContext, address, fileName, transferClient)
+	if err != nil {
+		return nil, fmt.Errorf("fetch peer metadata: %w", err)
+	}
+	stagingParent := filepath.Join(app.chunkStoragePath, ".transfers")
+	if err := os.MkdirAll(stagingParent, 0755); err != nil {
+		return nil, err
+	}
+	stagingRoot, err := os.MkdirTemp(stagingParent, strings.ReplaceAll(fileName, "*", "_")+"-pull-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(stagingRoot)
+
+	stagedFileDir := filepath.Join(stagingRoot, fileName)
+	if err := os.MkdirAll(stagedFileDir, 0755); err != nil {
+		return nil, err
+	}
+
+	result := &SyncResult{TotalChunks: len(metadata.ChunkHashes)}
+	for index, expectedHash := range metadata.ChunkHashes {
+		chunkName := fmt.Sprintf("chunk_%d.chunk", index)
+		localChunkPath := filepath.Join(app.chunkStoragePath, fileName, chunkName)
+		stagedChunkPath := filepath.Join(stagedFileDir, chunkName)
+
+		if existingData, readErr := os.ReadFile(localChunkPath); readErr == nil {
+			sum := sha256.Sum256(existingData)
+			if hex.EncodeToString(sum[:]) == expectedHash {
+				if writeErr := os.WriteFile(stagedChunkPath, existingData, 0644); writeErr == nil {
+					continue
+				}
+			}
+		}
+
+		chunkData, fetchErr := network.FetchChunkFromAddress(requestContext, address, expectedHash, chunkClient)
+		if fetchErr != nil && app.deviceRegistry != nil && app.deviceRegistry.Status().Registered {
+			if peerData, _, peerErr := app.deviceRegistry.RetrieveChunk(requestContext, expectedHash); peerErr == nil {
+				chunkData = peerData
+				fetchErr = nil
+			}
+		}
+		if fetchErr != nil {
+			return nil, fmt.Errorf("pull chunk %d: %w", index, fetchErr)
+		}
+		if writeErr := os.WriteFile(stagedChunkPath, chunkData, 0644); writeErr != nil {
+			return nil, writeErr
+		}
+		result.ChunksSent++
+		result.ChunkBytesSent += int64(len(chunkData))
+	}
+
+	applyErr := app.applyIncomingTransfer(metadata, stagingRoot)
+	if applyErr != nil {
+		var syncConflictError *network.SyncConflictError
+		var keepLocalError *network.KeepLocalError
+		if errors.As(applyErr, &syncConflictError) {
+			result.ConflictFile = syncConflictError.ConflictFile
+			return result, nil
+		}
+		if errors.As(applyErr, &keepLocalError) {
+			result.KeepLocal = true
+			return result, nil
+		}
+		return nil, fmt.Errorf("apply pulled file: %w", applyErr)
+	}
+
+	// Cache pulled chunks for future incremental comparisons and index them.
+	localChunkDir := filepath.Join(app.chunkStoragePath, fileName)
+	if err := os.MkdirAll(localChunkDir, 0755); err == nil {
+		for index, expectedHash := range metadata.ChunkHashes {
+			chunkName := fmt.Sprintf("chunk_%d.chunk", index)
+			if data, err := os.ReadFile(filepath.Join(stagedFileDir, chunkName)); err == nil {
+				localPath := filepath.Join(localChunkDir, chunkName)
+				if writeErr := os.WriteFile(localPath, data, 0644); writeErr == nil && app.chunkIndex != nil {
+					app.chunkIndex.Add(expectedHash, localPath)
+				}
+			}
+		}
+		app.scheduleLocalChunkInventoryReport()
+	}
+	result.BaseUpdated = true
+	return result, nil
+}
+
+// GetFileSyncStatuses returns a per-file sync state ("Synced", "Conflict", "Modified", or "Local only").
+func (app *App) GetFileSyncStatuses() map[string]string {
+	statuses := make(map[string]string)
+	if app.db == nil {
+		return statuses
+	}
+	openConflicts := make(map[string]bool)
+	if conflictRows, err := app.db.Query("SELECT DISTINCT file_id FROM conflicts WHERE status = 'open'"); err == nil {
+		for conflictRows.Next() {
+			var fileID string
+			if conflictRows.Scan(&fileID) == nil {
+				openConflicts[fileID] = true
+			}
+		}
+		_ = conflictRows.Err()
+		_ = conflictRows.Close()
+	}
+	rows, err := app.db.Query(`SELECT f.id, COALESCE(f.last_synced_hash, ''), COALESCE(v.content_hash, '')
+		FROM files f
+		LEFT JOIN file_versions v ON v.file_id = f.id AND v.version_number = f.current_version`)
+	if err != nil {
+		return statuses
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var fileID, baseHash, contentHash string
+		if rows.Scan(&fileID, &baseHash, &contentHash) != nil {
+			continue
+		}
+		switch {
+		case openConflicts[fileID]:
+			statuses[fileID] = "Conflict"
+		case baseHash == "":
+			statuses[fileID] = "Local only"
+		case baseHash == contentHash && contentHash != "":
+			statuses[fileID] = "Synced"
+		default:
+			statuses[fileID] = "Modified"
+		}
+	}
+	if rows.Err() != nil {
+		return statuses
+	}
+	return statuses
 }

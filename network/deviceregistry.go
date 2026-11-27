@@ -2,8 +2,12 @@
 package network
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -25,6 +29,7 @@ type DeviceSettings struct {
 	RegistrationKey    string `json:"registrationKey"`
 	DeviceID           string `json:"deviceId"`
 	CoordinatorID      string `json:"coordinatorId,omitempty"`
+	CAFingerprint      string `json:"caFingerprint,omitempty"`
 	Coordinator        bool   `json:"coordinator"`
 	CoordinatorAddress string `json:"coordinatorAddress"`
 }
@@ -102,16 +107,34 @@ type registrationRequest struct {
 	Name            string `json:"name"`
 	Port            int    `json:"port"`
 	PairingCode     string `json:"pairingCode,omitempty"`
+	CSRPEM          string `json:"csrPem,omitempty"`
+}
+
+type registrationResponse struct {
+	Device
+	CACertPEM           string   `json:"caCertPem,omitempty"`
+	CAFingerprint       string   `json:"caFingerprint,omitempty"`
+	PeerCertPEM         string   `json:"peerCertPem,omitempty"`
+	AuthorizedDeviceIDs []string `json:"authorizedDeviceIds,omitempty"`
+	RevokedDeviceIDs    []string `json:"revokedDeviceIds,omitempty"`
+}
+
+type revocationNotice struct {
+	AuthorizedDeviceIDs []string `json:"authorizedDeviceIds"`
+	RevokedDeviceIDs    []string `json:"revokedDeviceIds"`
 }
 
 // Rabindra Neupane
 // DeviceRegistry owns persistent identity, coordinator settings, heartbeat
-// state, registered-device queries, and the optional chunk-location service.
+// state, registered-device queries, mTLS credentials, and chunk-location tracking.
 type DeviceRegistry struct {
 	chunkLocations           ChunkLocationStore
+	chunkIndex               *ChunkFileIndex
 	mutex                    sync.Mutex
+	tlsMutex                 sync.RWMutex
 	database                 *sql.DB
 	settings                 DeviceSettings
+	configDir                string
 	settingsPath             string
 	name                     string
 	port                     int
@@ -135,6 +158,20 @@ type DeviceRegistry struct {
 	activePairingUntil       time.Time
 	usedNonces               map[string]time.Time
 	pairingAttempts          map[string]pairingAttempt
+	authorizedDevices        map[string]bool
+	revokedDevices           map[string]bool
+	caCert                   *x509.Certificate
+	caKey                    *ecdsa.PrivateKey
+	caCertPEM                string
+	caFingerprint            string
+	caPool                   *x509.CertPool
+	peerKey                  *ecdsa.PrivateKey
+	peerCert                 *x509.Certificate
+	peerTLSCert              tls.Certificate
+	bootstrapCert            tls.Certificate
+	transferClient           *http.Client
+	coordClient              *http.Client
+	chunkClient              *http.Client
 }
 
 // Rabindra Neupane
@@ -150,11 +187,27 @@ func newDeviceToken() (string, error) {
 }
 
 // Rabindra Neupane
-// OpenDeviceRegistry loads or creates this installation's identity, validates
-// saved coordinator settings, and starts the heartbeat service.
-func OpenDeviceRegistry(applicationContext context.Context, database *sql.DB, projectRoot string, serverPort int) (*DeviceRegistry, error) {
+// OpenDeviceRegistry loads or creates this installation's identity inside the
+// per-user OS configuration directory (os.UserConfigDir()/FileSync/), protects
+// secrets at rest, initializes mTLS credentials, and starts the heartbeat service.
+func OpenDeviceRegistry(applicationContext context.Context, database *sql.DB, _ string, serverPort int) (*DeviceRegistry, error) {
+	configDir, err := defaultSecurityConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	return OpenDeviceRegistryWithConfigDir(applicationContext, database, configDir, serverPort)
+}
+
+// OpenDeviceRegistryWithConfigDir initializes a DeviceRegistry storing all
+// credentials, keys, and certificates in configDir (mode 0700).
+func OpenDeviceRegistryWithConfigDir(applicationContext context.Context, database *sql.DB, configDir string, serverPort int) (*DeviceRegistry, error) {
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		return nil, fmt.Errorf("create config directory: %w", err)
+	}
+	_ = os.Chmod(configDir, 0700)
+
 	// Build the path used to preserve this installation's private identity.
-	settingsPath := filepath.Join(projectRoot, ".filesync-device.json")
+	settingsPath := filepath.Join(configDir, deviceSettingsFileName)
 	deviceSettings := DeviceSettings{}
 	// Read any identity and coordinator settings saved by an earlier run.
 	settingsData, settingsReadingError := os.ReadFile(settingsPath)
@@ -163,6 +216,13 @@ func OpenDeviceRegistry(applicationContext context.Context, database *sql.DB, pr
 		// Stop when the settings file does not contain valid JSON.
 		if settingsDecodingError := json.Unmarshal(settingsData, &deviceSettings); settingsDecodingError != nil {
 			return nil, fmt.Errorf("read device settings: %w", settingsDecodingError)
+		}
+		if deviceSettings.RegistrationKey != "" {
+			plainKey, decryptErr := unprotectLocalSecret([]byte(deviceSettings.RegistrationKey))
+			if decryptErr != nil {
+				return nil, fmt.Errorf("unprotect registration key in %s: %w", settingsPath, decryptErr)
+			}
+			deviceSettings.RegistrationKey = string(plainKey)
 		}
 	} else if !os.IsNotExist(settingsReadingError) {
 		return nil, settingsReadingError
@@ -201,13 +261,46 @@ func OpenDeviceRegistry(applicationContext context.Context, database *sql.DB, pr
 	if !deviceSettings.Coordinator && deviceSettings.CoordinatorAddress != "" && deviceSettings.DeviceID == "" {
 		initialState = RegistrationPairingNeeded
 	}
-	// Open persistent chunk-location storage before accepting registry requests.
+	// Open persistent chunk-location storage and revocation table before accepting registry requests.
 	chunkLocationStore, chunkLocationStoreOpeningError := newSQLiteChunkLocationStore(database)
 	if chunkLocationStoreOpeningError != nil {
 		cancelService()
 		return nil, chunkLocationStoreOpeningError
 	}
-	registry := &DeviceRegistry{chunkLocations: chunkLocationStore, database: database, settings: deviceSettings, settingsPath: settingsPath, name: deviceName, port: serverPort, started: time.Now().UnixNano(), serviceContext: serviceContext, cancelService: cancelService, wakeSignal: make(chan struct{}, 1), doneSignal: make(chan struct{}), usedNonces: make(map[string]time.Time), pairingAttempts: make(map[string]pairingAttempt), registrationState: initialState, retryDelay: 5 * time.Second, pairingRetryPaused: initialState == RegistrationPairingNeeded, pairingAttemptsRemaining: 5}
+	if _, revokeTableErr := database.Exec(`CREATE TABLE IF NOT EXISTS revoked_devices (
+		device_id TEXT PRIMARY KEY,
+		revoked_at INTEGER NOT NULL
+	)`); revokeTableErr != nil {
+		cancelService()
+		return nil, fmt.Errorf("create revoked devices table: %w", revokeTableErr)
+	}
+
+	registry := &DeviceRegistry{
+		chunkLocations:           chunkLocationStore,
+		database:                 database,
+		settings:                 deviceSettings,
+		configDir:                configDir,
+		settingsPath:             settingsPath,
+		name:                     deviceName,
+		port:                     serverPort,
+		started:                  time.Now().UnixNano(),
+		serviceContext:           serviceContext,
+		cancelService:            cancelService,
+		wakeSignal:               make(chan struct{}, 1),
+		doneSignal:               make(chan struct{}),
+		usedNonces:               make(map[string]time.Time),
+		pairingAttempts:          make(map[string]pairingAttempt),
+		authorizedDevices:        make(map[string]bool),
+		revokedDevices:           make(map[string]bool),
+		registrationState:        initialState,
+		retryDelay:               5 * time.Second,
+		pairingRetryPaused:       initialState == RegistrationPairingNeeded,
+		pairingAttemptsRemaining: 5,
+	}
+	if err := registry.initTLSState(); err != nil {
+		cancelService()
+		return nil, fmt.Errorf("initialize mTLS credentials: %w", err)
+	}
 	// Save the complete settings so a new key survives future restarts.
 	if settingsSavingError := registry.saveSettingsLocked(deviceSettings); settingsSavingError != nil {
 		cancelService()
@@ -219,14 +312,45 @@ func OpenDeviceRegistry(applicationContext context.Context, database *sql.DB, pr
 	return registry, nil
 }
 
+// SetChunkFileIndex associates the registry with the application's accepted chunk index.
+func (registry *DeviceRegistry) SetChunkFileIndex(index *ChunkFileIndex) {
+	if registry == nil {
+		return
+	}
+	registry.mutex.Lock()
+	registry.chunkIndex = index
+	registry.mutex.Unlock()
+}
+
+// ChunkFileIndex returns the configured chunk file index, if any.
+func (registry *DeviceRegistry) ChunkFileIndex() *ChunkFileIndex {
+	if registry == nil {
+		return nil
+	}
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	return registry.chunkIndex
+}
+
 // Rabindra Neupane
 // saveSettingsLocked writes settings through a temporary file before renaming
 // it, preventing a partial write from corrupting the saved device identity.
 func (registry *DeviceRegistry) saveSettingsLocked(settings DeviceSettings) error {
+	diskSettings := settings
+	if diskSettings.RegistrationKey != "" {
+		protectedKey, protectErr := protectLocalSecret([]byte(diskSettings.RegistrationKey))
+		if protectErr != nil {
+			return fmt.Errorf("protect registration key: %w", protectErr)
+		}
+		diskSettings.RegistrationKey = string(protectedKey)
+	}
 	// Create readable JSON for the local settings file.
-	settingsData, settingsEncodingError := json.MarshalIndent(settings, "", "  ")
+	settingsData, settingsEncodingError := json.MarshalIndent(diskSettings, "", "  ")
 	if settingsEncodingError != nil {
 		return settingsEncodingError
+	}
+	if err := os.MkdirAll(filepath.Dir(registry.settingsPath), 0700); err != nil {
+		return err
 	}
 	// Create a temporary file beside the final settings file.
 	temporaryFile, settingsTemporaryFileCreationError := os.CreateTemp(filepath.Dir(registry.settingsPath), ".filesync-device-*.tmp")
@@ -252,7 +376,11 @@ func (registry *DeviceRegistry) saveSettingsLocked(settings DeviceSettings) erro
 		return temporaryFileClosingError
 	}
 	// Atomically replace the old settings file with the completed file.
-	return os.Rename(temporaryFile.Name(), registry.settingsPath)
+	if err := os.Rename(temporaryFile.Name(), registry.settingsPath); err != nil {
+		return err
+	}
+	_ = os.Chmod(registry.settingsPath, 0600)
+	return nil
 }
 
 // Rabindra Neupane
@@ -302,10 +430,15 @@ func (registry *DeviceRegistry) Configure(isCoordinator bool, coordinatorAddress
 	defer registry.mutex.Unlock()
 	// Copy the current settings before applying the requested changes.
 	updatedSettings := registry.settings
+	roleOrCoordinatorChanged := isCoordinator != updatedSettings.Coordinator || coordinatorAddress != updatedSettings.CoordinatorAddress
 	// Clear the assigned ID when switching to a different coordinator.
-	if isCoordinator != updatedSettings.Coordinator || coordinatorAddress != updatedSettings.CoordinatorAddress {
+	if roleOrCoordinatorChanged {
 		updatedSettings.DeviceID = ""
 		updatedSettings.CoordinatorID = ""
+		updatedSettings.CAFingerprint = ""
+		registry.clearPeerTLSMaterial()
+		registry.authorizedDevices = make(map[string]bool)
+		registry.revokedDevices = make(map[string]bool)
 	}
 	// Store the selected role and coordinator address in the copied settings.
 	updatedSettings.Coordinator, updatedSettings.CoordinatorAddress = isCoordinator, coordinatorAddress
@@ -316,6 +449,11 @@ func (registry *DeviceRegistry) Configure(isCoordinator bool, coordinatorAddress
 	// Reset registration state so the background service registers again.
 	previousRegistrationState := registry.registrationState
 	registry.settings = updatedSettings
+	if isCoordinator {
+		if err := registry.ensureCoordinatorPKILocked(); err != nil {
+			return err
+		}
+	}
 	registry.pendingPairingCode = pairingCode
 	registry.pairingRetryPaused = false
 	registry.pairingAttemptsRemaining = 5
@@ -390,6 +528,8 @@ func (registry *DeviceRegistry) Handler() http.Handler {
 	})
 	// Route device-list reads to the coordinator device handler.
 	deviceRoutes.HandleFunc("/devices", registry.devicesHandler)
+	// Route immediate coordinator revocation pushes to registered peers.
+	deviceRoutes.HandleFunc("/devices/revocations", registry.revocationsHandler)
 	// Return the completed device registry router.
 	return deviceRoutes
 }
@@ -403,6 +543,16 @@ func (registry *DeviceRegistry) registrationHandler(responseWriter http.Response
 		responseWriter.Header().Set("Allow", "POST")
 		http.Error(responseWriter, "Only POST requests are allowed", 405)
 		return
+	}
+	if heartbeat {
+		if _, ok := VerifiedPeerDeviceID(httpRequest); !ok {
+			writeCoordinatorError(responseWriter, &coordinatorError{
+				Code:       coordinatorErrorAuthentication,
+				Message:    "valid mutual TLS client certificate is required",
+				StatusCode: http.StatusUnauthorized,
+			})
+			return
+		}
 	}
 	// Read and preserve the exact body covered by the request signature.
 	requestBody, requestBodyReadingError := readAuthenticationBody(responseWriter, httpRequest)
@@ -474,65 +624,248 @@ func (registry *DeviceRegistry) registrationHandler(responseWriter http.Response
 		}
 		return
 	}
-	// Respond with the stable identity assigned to the device.
+	// Respond with the stable identity and signed peer certificate.
 	writeTransferJSON(responseWriter, registeredDevice)
+}
+
+func (registry *DeviceRegistry) loadAuthorizationSnapshotLocked() ([]string, []string) {
+	authorized := make([]string, 0)
+	revoked := make([]string, 0)
+	if registry.database == nil {
+		return authorized, revoked
+	}
+	if rows, err := registry.database.Query("SELECT device_id FROM device_registry ORDER BY device_id"); err == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				authorized = append(authorized, id)
+			}
+		}
+		if rows.Err() != nil {
+			authorized = authorized[:0]
+		}
+		rows.Close()
+	}
+	if rows, err := registry.database.Query("SELECT device_id FROM revoked_devices ORDER BY device_id"); err == nil {
+		for rows.Next() {
+			var id string
+			if rows.Scan(&id) == nil {
+				revoked = append(revoked, id)
+			}
+		}
+		if rows.Err() != nil {
+			revoked = revoked[:0]
+		}
+		rows.Close()
+	}
+	return authorized, revoked
+}
+
+func (registry *DeviceRegistry) applyAuthorizationSnapshot(authorizedIDs, revokedIDs []string) {
+	registry.mutex.Lock()
+	defer registry.mutex.Unlock()
+	if authorizedIDs != nil {
+		nextAuth := make(map[string]bool, len(authorizedIDs))
+		for _, id := range authorizedIDs {
+			nextAuth[id] = true
+		}
+		registry.authorizedDevices = nextAuth
+	}
+	if revokedIDs != nil {
+		nextRevoked := make(map[string]bool, len(revokedIDs))
+		for _, id := range revokedIDs {
+			nextRevoked[id] = true
+			delete(registry.authorizedDevices, id)
+		}
+		registry.revokedDevices = nextRevoked
+	}
+}
+
+func (registry *DeviceRegistry) onlinePeerTargetsLocked() []Device {
+	peers := make([]Device, 0)
+	if registry.database == nil || !registry.settings.Coordinator {
+		return peers
+	}
+	offlineCutoff := time.Now().Add(-30 * time.Second).UnixNano()
+	rows, err := registry.database.Query("SELECT device_id,name,ip,port,last_seen FROM device_registry ORDER BY device_id")
+	if err != nil {
+		return peers
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d Device
+		var lastSeen int64
+		if rows.Scan(&d.DeviceID, &d.DeviceName, &d.DeviceIP, &d.DevicePort, &lastSeen) != nil {
+			continue
+		}
+		if d.DeviceID != registry.settings.DeviceID && lastSeen >= offlineCutoff && lastSeen >= registry.started {
+			peers = append(peers, d)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil
+	}
+	return peers
+}
+
+func (registry *DeviceRegistry) pushRevocationToPeers(peers []Device, authorizedIDs, revokedIDs []string) {
+	if len(peers) == 0 {
+		return
+	}
+	payload, err := json.Marshal(revocationNotice{
+		AuthorizedDeviceIDs: authorizedIDs,
+		RevokedDeviceIDs:    revokedIDs,
+	})
+	if err != nil {
+		return
+	}
+	parentCtx := registry.serviceContext
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 500*time.Millisecond)
+	defer cancel()
+	client := registry.CoordinatorHTTPClient()
+
+	var wg sync.WaitGroup
+	for _, peer := range peers {
+		if peer.DeviceIP == "" || peer.DevicePort < 1 {
+			continue
+		}
+		wg.Add(1)
+		go func(target Device) {
+			defer wg.Done()
+			url := "https://" + net.JoinHostPort(target.DeviceIP, strconv.Itoa(target.DevicePort)) + "/devices/revocations"
+			req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+			if reqErr != nil {
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, doErr := client.Do(req)
+			if doErr == nil {
+				resp.Body.Close()
+			}
+		}(peer)
+	}
+	wg.Wait()
+}
+
+func (registry *DeviceRegistry) revocationsHandler(responseWriter http.ResponseWriter, httpRequest *http.Request) {
+	if httpRequest.Method != http.MethodPost {
+		responseWriter.Header().Set("Allow", http.MethodPost)
+		http.Error(responseWriter, "Only POST requests are allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	certDeviceID, ok := VerifiedPeerDeviceID(httpRequest)
+	if !ok {
+		http.Error(responseWriter, "Valid mutual TLS client certificate required", http.StatusUnauthorized)
+		return
+	}
+	registry.mutex.Lock()
+	expectedCoordinatorID := registry.settings.CoordinatorID
+	registry.mutex.Unlock()
+	if expectedCoordinatorID == "" || certDeviceID != expectedCoordinatorID {
+		http.Error(responseWriter, "Only the pinned coordinator may push revocations", http.StatusUnauthorized)
+		return
+	}
+	var notice revocationNotice
+	if err := readTransferJSON(responseWriter, httpRequest, &notice); err != nil {
+		http.Error(responseWriter, "Invalid revocation notice", http.StatusBadRequest)
+		return
+	}
+	registry.applyAuthorizationSnapshot(notice.AuthorizedDeviceIDs, notice.RevokedDeviceIDs)
+	writeTransferJSON(responseWriter, struct {
+		Updated bool `json:"updated"`
+	}{true})
 }
 
 // Rabindra Neupane
 // acceptRegistration creates a stable device ID for a new installation or
 // refreshes the stored name, address, port, and last-seen time for a known one.
-func (registry *DeviceRegistry) acceptRegistration(requestContext context.Context, registration registrationRequest, deviceIP string, heartbeat bool) (Device, error) {
+func (registry *DeviceRegistry) acceptRegistration(requestContext context.Context, registration registrationRequest, deviceIP string, heartbeat bool) (registrationResponse, error) {
 	// Lock coordinator state and database registration updates together.
 	registry.mutex.Lock()
 	defer registry.mutex.Unlock()
 	// Reject registration work when this installation is not coordinator.
 	if !registry.settings.Coordinator {
-		return Device{}, &coordinatorError{Code: coordinatorErrorUnavailable, Message: "this device is not the coordinator", StatusCode: http.StatusServiceUnavailable}
+		return registrationResponse{}, &coordinatorError{Code: coordinatorErrorUnavailable, Message: "this device is not the coordinator", StatusCode: http.StatusServiceUnavailable}
 	}
+	if err := registry.ensureCoordinatorPKILocked(); err != nil {
+		return registrationResponse{}, err
+	}
+	registry.tlsMutex.RLock()
+	caCert := registry.caCert
+	caKey := registry.caKey
+	caCertPEM := registry.caCertPEM
+	caFP := registry.caFingerprint
+	registry.tlsMutex.RUnlock()
+
 	// Look up an existing device by its private registration key or assigned ID.
 	var deviceID string
 	var registrationLookupError error
 	if heartbeat {
+		var revokedCount int
+		if err := registry.database.QueryRowContext(requestContext, "SELECT COUNT(*) FROM revoked_devices WHERE device_id=?", registration.DeviceID).Scan(&revokedCount); err == nil && revokedCount > 0 {
+			return registrationResponse{}, &coordinatorError{Code: coordinatorErrorDeviceRevoked, Message: "device registration was removed; pair again", StatusCode: http.StatusUnauthorized}
+		}
 		registrationLookupError = registry.database.QueryRowContext(requestContext, "SELECT device_id FROM device_registry WHERE device_id=?", registration.DeviceID).Scan(&deviceID)
 	} else {
 		registrationLookupError = registry.database.QueryRowContext(requestContext, "SELECT device_id FROM device_registry WHERE registration_key=?", registration.RegistrationKey).Scan(&deviceID)
 	}
 	// Reject a heartbeat when its device is unknown or uses the wrong ID.
 	if heartbeat && (registrationLookupError == sql.ErrNoRows || (registrationLookupError == nil && deviceID != registration.DeviceID)) {
-		return Device{}, &coordinatorError{Code: coordinatorErrorDeviceRevoked, Message: "device registration was removed; pair again", StatusCode: http.StatusUnauthorized}
+		return registrationResponse{}, &coordinatorError{Code: coordinatorErrorDeviceRevoked, Message: "device registration was removed; pair again", StatusCode: http.StatusUnauthorized}
 	}
 	// Return unexpected database lookup errors.
 	if registrationLookupError != nil && registrationLookupError != sql.ErrNoRows {
-		return Device{}, registrationLookupError
+		return registrationResponse{}, registrationLookupError
 	}
 	// Create a stable device ID for a new registration key.
+	localCoordinator := registration.RegistrationKey == registry.settings.RegistrationKey
 	newRemoteRegistration := false
 	if registrationLookupError == sql.ErrNoRows {
 		// Require a live single-use code before accepting an unknown installation.
-		localCoordinator := registration.RegistrationKey == registry.settings.RegistrationKey
 		pairingActive := registry.activePairingUntil.After(time.Now())
 		if !localCoordinator {
 			if pairingBlockUntil := registry.pairingBlockUntilLocked(deviceIP); pairingBlockUntil.After(time.Now()) {
-				return Device{}, &coordinatorError{Code: coordinatorErrorPairingBlocked, Message: "too many incorrect pairing attempts", AttemptsRemaining: 0, RetryAt: pairingBlockUntil.UTC().Format(time.RFC3339), StatusCode: http.StatusTooManyRequests}
+				return registrationResponse{}, &coordinatorError{Code: coordinatorErrorPairingBlocked, Message: "too many incorrect pairing attempts", AttemptsRemaining: 0, RetryAt: pairingBlockUntil.UTC().Format(time.RFC3339), StatusCode: http.StatusTooManyRequests}
 			}
 			if !pairingActive {
-				return Device{}, &coordinatorError{Code: coordinatorErrorPairingRequired, Message: "coordinator pairing is closed or expired", StatusCode: http.StatusForbidden}
+				return registrationResponse{}, &coordinatorError{Code: coordinatorErrorPairingRequired, Message: "coordinator pairing is closed or expired", StatusCode: http.StatusForbidden}
 			}
 			if !pairingCodeMatches(registration.PairingCode, registry.activePairingCode) {
 				attemptsRemaining, pairingBlockUntil := registry.recordPairingFailureLocked(deviceIP)
 				if pairingBlockUntil.After(time.Now()) {
-					return Device{}, &coordinatorError{Code: coordinatorErrorPairingBlocked, Message: "too many incorrect pairing attempts", AttemptsRemaining: 0, RetryAt: pairingBlockUntil.UTC().Format(time.RFC3339), StatusCode: http.StatusTooManyRequests}
+					return registrationResponse{}, &coordinatorError{Code: coordinatorErrorPairingBlocked, Message: "too many incorrect pairing attempts", AttemptsRemaining: 0, RetryAt: pairingBlockUntil.UTC().Format(time.RFC3339), StatusCode: http.StatusTooManyRequests}
 				}
-				return Device{}, &coordinatorError{Code: coordinatorErrorPairingInvalid, Message: "pairing code is incorrect", AttemptsRemaining: attemptsRemaining, StatusCode: http.StatusForbidden}
+				return registrationResponse{}, &coordinatorError{Code: coordinatorErrorPairingInvalid, Message: "pairing code is incorrect", AttemptsRemaining: attemptsRemaining, StatusCode: http.StatusForbidden}
 			}
 		}
 		var tokenGenerationError error
 		deviceID, tokenGenerationError = newDeviceToken()
 		if tokenGenerationError != nil {
-			return Device{}, tokenGenerationError
+			return registrationResponse{}, tokenGenerationError
 		}
 		newRemoteRegistration = !localCoordinator
+	} else if !heartbeat && registration.DeviceID != "" {
+		var revokedCount int
+		if err := registry.database.QueryRowContext(requestContext, "SELECT COUNT(*) FROM revoked_devices WHERE device_id=?", deviceID).Scan(&revokedCount); err == nil && revokedCount > 0 {
+			return registrationResponse{}, &coordinatorError{Code: coordinatorErrorDeviceRevoked, Message: "device registration was removed; pair again", StatusCode: http.StatusUnauthorized}
+		}
 	}
+
+	var peerCertPEM string
+	if !localCoordinator && !heartbeat && strings.TrimSpace(registration.CSRPEM) == "" {
+		return registrationResponse{}, &coordinatorError{Code: coordinatorErrorAuthentication, Message: "device certificate signing request is required", StatusCode: http.StatusBadRequest}
+	}
+	if strings.TrimSpace(registration.CSRPEM) != "" {
+		signedPEM, _, csrErr := signPeerCSR(caCert, caKey, []byte(registration.CSRPEM), deviceID, deviceIP, registration.Name)
+		if csrErr != nil {
+			return registrationResponse{}, &coordinatorError{Code: coordinatorErrorAuthentication, Message: csrErr.Error(), StatusCode: http.StatusBadRequest}
+		}
+		peerCertPEM = signedPEM
+	}
+
 	// Record the current time for online and offline tracking.
 	lastSeenTime := time.Now().UnixNano()
 	// Refresh a known heartbeat without sending or replacing its saved secret.
@@ -546,20 +879,44 @@ func (registry *DeviceRegistry) acceptRegistration(requestContext context.Contex
 			ip=excluded.ip,port=excluded.port,last_seen=excluded.last_seen`, registration.RegistrationKey, deviceID, registration.Name, deviceIP, registration.Port, lastSeenTime)
 	}
 	if registrationSavingError != nil {
-		return Device{}, registrationSavingError
+		return registrationResponse{}, registrationSavingError
 	}
-	// Consume the one-time code only after the new registration is safely stored.
+	// Keep the pairing code active until the 2-minute window expires so multiple
+	// clients can join at the same time; clear any prior failure count for this IP.
 	if newRemoteRegistration {
-		registry.activePairingCode = ""
-		registry.activePairingUntil = time.Time{}
 		delete(registry.pairingAttempts, deviceIP)
+		_, _ = registry.database.ExecContext(requestContext, "DELETE FROM revoked_devices WHERE device_id=?", deviceID)
+		delete(registry.revokedDevices, deviceID)
 	}
-	// Return the registered device with its current online state.
+	if registry.authorizedDevices == nil {
+		registry.authorizedDevices = make(map[string]bool)
+	}
+	registry.authorizedDevices[deviceID] = true
+	authorizedIDs, revokedIDs := registry.loadAuthorizationSnapshotLocked()
+
+	// Return the registered device with its current online state and PKI material.
 	coordinatorID := registry.settings.DeviceID
-	if coordinatorID == "" && registration.RegistrationKey == registry.settings.RegistrationKey {
+	if coordinatorID == "" && localCoordinator {
 		coordinatorID = deviceID
 	}
-	return Device{DeviceID: deviceID, CoordinatorID: coordinatorID, DeviceName: registration.Name, DeviceIP: deviceIP, DevicePort: registration.Port, DeviceOnline: true, LastSeen: time.Unix(0, lastSeenTime).UTC().Format(time.RFC3339)}, nil
+	dev := Device{
+		DeviceID:      deviceID,
+		CoordinatorID: coordinatorID,
+		CAFingerprint: caFP,
+		DeviceName:    registration.Name,
+		DeviceIP:      deviceIP,
+		DevicePort:    registration.Port,
+		DeviceOnline:  true,
+		LastSeen:      time.Unix(0, lastSeenTime).UTC().Format(time.RFC3339),
+	}
+	return registrationResponse{
+		Device:              dev,
+		CACertPEM:           caCertPEM,
+		CAFingerprint:       caFP,
+		PeerCertPEM:         peerCertPEM,
+		AuthorizedDeviceIDs: authorizedIDs,
+		RevokedDeviceIDs:    revokedIDs,
+	}, nil
 }
 
 // Rabindra Neupane

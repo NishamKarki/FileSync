@@ -128,6 +128,9 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 
 		chunkFolderRemovalError :=
 			os.RemoveAll(oldChunkFolder)
+		if app.chunkIndex != nil {
+			app.chunkIndex.RemoveDir(oldChunkFolder)
+		}
 
 		if chunkFolderRemovalError != nil {
 			fmt.Println(
@@ -163,18 +166,7 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 			)
 
 		if relativePathError == nil {
-			_, databaseRemovalError :=
-				app.db.Exec(
-					"DELETE FROM files WHERE id = ?",
-					relativePath,
-				)
-
-			if databaseRemovalError != nil {
-				fmt.Println(
-					"Old file metadata removal error:",
-					databaseRemovalError,
-				)
-			}
+			app.cleanupLocalFileRecord(relativePath, fileWatcherEvent.Name)
 		}
 
 		// Notify the frontend.
@@ -189,10 +181,19 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	if fileWatcherEvent.Op&fsnotify.Remove != 0 {
 		fmt.Println("REMOVE:", fileName)
 
-		// Convert the deteled/removed file path into relative file path
-		// so that the matching file can be removed from the database
-		relativePath, _ := filepath.Rel(app.syncFolderPath, fileWatcherEvent.Name)
-		app.db.Exec("DELETE FROM files WHERE id = ?", relativePath)
+		// Remove local chunk cache, reconstructed copy, and metadata for the deleted file.
+		removedChunkDir := filepath.Join(app.chunkStoragePath, fileName)
+		_ = os.RemoveAll(removedChunkDir)
+		if app.chunkIndex != nil {
+			app.chunkIndex.RemoveDir(removedChunkDir)
+		}
+		if err := os.Remove(filepath.Join(app.reconstructedFilesPath, fileName)); err != nil && !os.IsNotExist(err) {
+			fmt.Println("Removed file cleanup error:", err)
+		}
+		relativePath, relativePathError := filepath.Rel(app.syncFolderPath, fileWatcherEvent.Name)
+		if relativePathError == nil {
+			app.cleanupLocalFileRecord(relativePath, fileWatcherEvent.Name)
+		}
 
 		// Notify the frontend the file deleted event
 		runtime.EventsEmit(
@@ -290,9 +291,30 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 				)
 				return
 			}
+
+			// Trigger automatic peer sync when enabled by the user.
+			if app.GetAutoSync() {
+				go app.autoSyncChangedFile(fileName)
+			}
 		},
 	)
 
 	// Allow other go routine to access the timer
 	app.timerMutex.Unlock()
+}
+
+// cleanupLocalFileRecord deletes file metadata, version history, remote hash marker,
+// and refreshes the coordinator chunk inventory after a rename or delete.
+func (app *App) cleanupLocalFileRecord(relativePath, fullPath string) {
+	if app.remoteFileHashes != nil {
+		delete(app.remoteFileHashes, filepath.Clean(fullPath))
+	}
+	if app.db != nil {
+		_, _ = app.db.Exec("DELETE FROM chunks WHERE file_version_id IN (SELECT id FROM file_versions WHERE file_id = ?)", relativePath)
+		_, _ = app.db.Exec("DELETE FROM file_versions WHERE file_id = ?", relativePath)
+		if _, err := app.db.Exec("DELETE FROM files WHERE id = ?", relativePath); err != nil {
+			fmt.Println("File metadata removal error:", err)
+		}
+	}
+	app.scheduleLocalChunkInventoryReport()
 }

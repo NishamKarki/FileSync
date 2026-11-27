@@ -12,7 +12,7 @@ import (
 )
 
 type summary struct {
-	fileSize, editLocation, mode                      string
+	fileSize, editLocation, chunkSize, mode           string
 	chunkBytes, savings, chunkRatio                   []float64
 	prepare, transfer, total, cpu, storage, detection []float64
 }
@@ -60,7 +60,7 @@ func readSyncMetrics(path string, summaries map[string]*summary) error {
 			continue
 		}
 		size, edit := scenario(row[1], row[3])
-		item := group(summaries, size, edit, row[2])
+		item := group(summaries, size, edit, row[4], row[2])
 		item.chunkBytes = append(item.chunkBytes, number(row[7]))
 		item.savings = append(item.savings, number(row[8]))
 		item.chunkRatio = append(item.chunkRatio, ratio(number(row[6]), number(row[5])))
@@ -88,8 +88,15 @@ func readConflictMetrics(path string, summaries map[string]*summary) error {
 			continue
 		}
 		size, edit := scenario(row[1], row[2])
-		for _, mode := range []string{"incremental", "whole-file"} {
-			group(summaries, size, edit, mode).detection = append(group(summaries, size, edit, mode).detection, number(row[4]))
+		for _, item := range summaries {
+			if item.fileSize == size && item.editLocation == edit {
+				item.detection = append(item.detection, number(row[4]))
+			}
+		}
+		if len(summaries) == 0 {
+			for _, mode := range []string{"incremental", "whole-file"} {
+				group(summaries, size, edit, "0", mode).detection = append(group(summaries, size, edit, "0", mode).detection, number(row[4]))
+			}
 		}
 	}
 	return nil
@@ -104,10 +111,10 @@ func scenario(fileName, fallbackSize string) (string, string) {
 	return fallbackSize, "unspecified"
 }
 
-func group(all map[string]*summary, size, edit, mode string) *summary {
-	key := strings.Join([]string{size, edit, mode}, "|")
+func group(all map[string]*summary, size, edit, chunkSize, mode string) *summary {
+	key := strings.Join([]string{size, edit, chunkSize, mode}, "|")
 	if all[key] == nil {
-		all[key] = &summary{fileSize: size, editLocation: edit, mode: mode}
+		all[key] = &summary{fileSize: size, editLocation: edit, chunkSize: chunkSize, mode: mode}
 	}
 	return all[key]
 }
@@ -121,7 +128,9 @@ func writeSummaries(directory string, summaries map[string]*summary) error {
 		items = append(items, item)
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].fileSize+items[i].editLocation+items[i].mode < items[j].fileSize+items[j].editLocation+items[j].mode
+		a := items[i].fileSize + "|" + items[i].chunkSize + "|" + items[i].editLocation + "|" + items[i].mode
+		b := items[j].fileSize + "|" + items[j].chunkSize + "|" + items[j].editLocation + "|" + items[j].mode
+		return a < b
 	})
 	file, err := os.Create(filepath.Join(directory, "benchmark_summary.csv"))
 	if err != nil {
@@ -129,17 +138,17 @@ func writeSummaries(directory string, summaries map[string]*summary) error {
 	}
 	defer file.Close()
 	writer := csv.NewWriter(file)
-	header := []string{"file_size", "edit_location", "mode", "mean_chunk_bytes_sent", "median_chunk_bytes_sent", "mean_bytes_saved_percent", "mean_chunks_sent_ratio", "mean_prepare_ms", "mean_transfer_ms", "mean_total_ms", "mean_cpu_ms", "mean_chunk_storage_bytes", "mean_conflict_detection_ms"}
+	header := []string{"file_size", "edit_location", "chunk_size_bytes", "mode", "mean_chunk_bytes_sent", "median_chunk_bytes_sent", "mean_bytes_saved_percent", "mean_chunks_sent_ratio", "mean_prepare_ms", "mean_transfer_ms", "mean_total_ms", "mean_cpu_ms", "mean_chunk_storage_bytes", "mean_conflict_detection_ms"}
 	if err := writer.Write(header); err != nil {
 		return err
 	}
-	markdown := []string{"# FileSync Benchmark Summary", "", "| File size | Edit location | Mode | Mean chunk bytes | Median chunk bytes | Mean saved | Mean chunk ratio | Mean total ms | Mean conflict detection ms |", "|---|---|---:|---:|---:|---:|---:|---:|---:|"}
+	markdown := []string{"# FileSync Benchmark Summary", "", "| File size | Edit location | Chunk size | Mode | Mean chunk bytes | Median chunk bytes | Mean saved | Mean chunk ratio | Mean total ms | Mean conflict detection ms |", "|---|---|---:|---|---:|---:|---:|---:|---:|---:|"}
 	for _, item := range items {
-		row := []string{item.fileSize, item.editLocation, item.mode, format(mean(item.chunkBytes)), format(median(item.chunkBytes)), format(mean(item.savings)), format(mean(item.chunkRatio)), format(mean(item.prepare)), format(mean(item.transfer)), format(mean(item.total)), format(mean(item.cpu)), format(mean(item.storage)), format(mean(item.detection))}
+		row := []string{item.fileSize, item.editLocation, item.chunkSize, item.mode, format(mean(item.chunkBytes)), format(median(item.chunkBytes)), format(mean(item.savings)), format(mean(item.chunkRatio)), format(mean(item.prepare)), format(mean(item.transfer)), format(mean(item.total)), format(mean(item.cpu)), format(mean(item.storage)), format(mean(item.detection))}
 		if err := writer.Write(row); err != nil {
 			return err
 		}
-		markdown = append(markdown, fmt.Sprintf("| %s | %s | %s | %s | %s | %s%% | %s | %s | %s |", item.fileSize, item.editLocation, item.mode, row[3], row[4], row[5], row[6], row[9], row[12]))
+		markdown = append(markdown, fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s%% | %s | %s | %s |", item.fileSize, item.editLocation, item.chunkSize, item.mode, row[4], row[5], row[6], row[7], row[10], row[13]))
 	}
 	writer.Flush()
 	if err := writer.Error(); err != nil {

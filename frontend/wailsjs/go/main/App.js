@@ -26,12 +26,24 @@ export function FileWatcher(arg1) {
   return window['go']['main']['App']['FileWatcher'](arg1);
 }
 
+export function GetAutoSync() {
+  return window['go']['main']['App']['GetAutoSync']();
+}
+
+export function GetChunkSize() {
+  return window['go']['main']['App']['GetChunkSize']();
+}
+
 export function GetConflicts() {
   return window['go']['main']['App']['GetConflicts']();
 }
 
 export function GetCoordinatorPairingStatus() {
   return window['go']['main']['App']['GetCoordinatorPairingStatus']();
+}
+
+export function GetFileSyncStatuses() {
+  return window['go']['main']['App']['GetFileSyncStatuses']();
 }
 
 export function GetRegisteredDevices() {
@@ -50,6 +62,10 @@ export function ListSyncedFiles() {
   return window['go']['main']['App']['ListSyncedFiles']();
 }
 
+export function PullFile(arg1, arg2) {
+  return window['go']['main']['App']['PullFile'](arg1, arg2);
+}
+
 export function ReconstructFile(arg1) {
   return window['go']['main']['App']['ReconstructFile'](arg1);
 }
@@ -62,16 +78,20 @@ export function ResolveConflict(arg1, arg2) {
   return window['go']['main']['App']['ResolveConflict'](arg1, arg2);
 }
 
-export function SaveChunks(arg1, arg2) {
-  return window['go']['main']['App']['SaveChunks'](arg1, arg2);
-}
-
 export function ScheduleFileProcessing(arg1) {
   return window['go']['main']['App']['ScheduleFileProcessing'](arg1);
 }
 
 export function SendFile(arg1, arg2) {
   return window['go']['main']['App']['SendFile'](arg1, arg2);
+}
+
+export function SetAutoSync(arg1, arg2) {
+  return window['go']['main']['App']['SetAutoSync'](arg1, arg2);
+}
+
+export function SetChunkSize(arg1) {
+  return window['go']['main']['App']['SetChunkSize'](arg1);
 }
 
 export function StartCoordinatorPairing() {

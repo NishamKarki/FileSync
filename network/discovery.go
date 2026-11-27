@@ -11,16 +11,24 @@ import (
 func GetLocalIP() (string, error) {
 	// Create a UDP route only to learn which local interface is active.
 	connection, networkDialError := net.Dial("udp", "8.8.8.8:80")
-	// Check whether an active network route is available.
-	if networkDialError != nil {
+	if networkDialError == nil {
+		defer connection.Close()
+		localAddress := connection.LocalAddr().(*net.UDPAddr)
+		return localAddress.IP.String(), nil
+	}
+	// Fall back to enumerating local interfaces when there is no internet route (pure LAN).
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
 		return "", networkDialError
 	}
-	// Close the temporary route after reading its local address.
-	defer connection.Close()
-	// Read the local IP selected by the operating system.
-	localAddress := connection.LocalAddr().(*net.UDPAddr)
-	// Return the address without printing on every heartbeat.
-	return localAddress.IP.String(), nil
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+			if ip4 := ipNet.IP.To4(); ip4 != nil {
+				return ip4.String(), nil
+			}
+		}
+	}
+	return "127.0.0.1", nil
 }
 
 // Rabindra Neupane
@@ -62,12 +70,12 @@ func DiscoverDevices() []Device {
 			// Save a complete device record only for a valid FileSync response.
 			if devicePingError == nil && response.Success {
 				device := Device{
-					DeviceID:     response.DeviceID,
-					Coordinator:  response.Coordinator,
-					DeviceName:   response.DeviceName,
-					DeviceIP:     deviceIP,
-					DevicePort:   8080,
-					DeviceOnline: true,
+					Coordinator:   response.Coordinator,
+					CAFingerprint: response.CAFingerprint,
+					DeviceName:    response.DeviceName,
+					DeviceIP:      deviceIP,
+					DevicePort:    8080,
+					DeviceOnline:  true,
 				}
 
 				fmt.Println("FileSync device found:", device.DeviceName, device.DeviceIP)

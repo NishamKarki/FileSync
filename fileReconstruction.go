@@ -43,6 +43,11 @@ func (app *App) ReconstructFile(fileName string) error {
 	fileName =
 		filepath.Base(fileName)
 
+	// Recover any missing or corrupted local chunks from registered peers before rebuilding.
+	if recoveryError := app.recoverMissingChunksFromPeers(fileName); recoveryError != nil {
+		fmt.Println("Peer chunk recovery notice:", recoveryError)
+	}
+
 	// Reconstruct the file from the locally stored chunks.
 	reconstructionError :=
 		app.reconstructStoredFile(
@@ -413,4 +418,49 @@ func replaceVerifiedFile(source, destination string) error {
 	}
 	// Return the final rename error after all retries fail.
 	return fileRenameError
+}
+
+// recoverMissingChunksFromPeers checks expected chunks recorded in the local
+// metadata database and retrieves any missing or corrupted chunk from online peers.
+func (app *App) recoverMissingChunksFromPeers(fileName string) error {
+	if app.db == nil || app.deviceRegistry == nil || !app.deviceRegistry.Status().Registered {
+		return nil
+	}
+	rows, err := app.db.Query(`SELECT c.chunk_index, c.chunk_hash
+		FROM files f
+		JOIN file_versions v ON v.file_id = f.id AND v.version_number = f.current_version
+		JOIN chunks c ON c.file_version_id = v.id
+		WHERE f.id = ?
+		ORDER BY c.chunk_index`, fileName)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type expectedChunk struct {
+		index int
+		hash  string
+	}
+	var expected []expectedChunk
+	for rows.Next() {
+		var item expectedChunk
+		if scanErr := rows.Scan(&item.index, &item.hash); scanErr != nil {
+			return scanErr
+		}
+		expected = append(expected, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range expected {
+		chunkPath := filepath.Join(app.chunkStoragePath, fileName, fmt.Sprintf("chunk_%d.chunk", item.index))
+		storedHash, hashErr := hashStoredFile(chunkPath)
+		if hashErr == nil && storedHash == item.hash {
+			continue
+		}
+		if fetchErr := app.FetchMissingChunkFromPeers(app.ctx, fileName, item.index, item.hash); fetchErr != nil {
+			return fmt.Errorf("recover chunk %d of %s: %w", item.index, fileName, fetchErr)
+		}
+	}
+	return nil
 }

@@ -41,34 +41,6 @@ func GetBaseHash(db *sql.DB, fileID string) (string, error) {
 	return baseHash.String, nil
 }
 
-// Returns this device's newest content hash for the file.
-// Returns "" if the file doesn't exist on this device (never added, or deleted).
-func GetLocalHash(db *sql.DB, fileID string) (string, error) {
-
-	// Joining with files means deleted files return nothing, because deleting
-	// a file removes its row from files but keeps its old versions.
-	// The newest version is the one with the highest id.
-	var localHash sql.NullString
-	localHashQueryError := db.QueryRow(
-		`SELECT file_versions.content_hash
-		 FROM file_versions
-		 JOIN files ON files.id = file_versions.file_id
-		 WHERE file_versions.file_id = ?
-		 ORDER BY file_versions.id DESC
-		 LIMIT 1`,
-		fileID,
-	).Scan(&localHash)
-
-	if localHashQueryError == sql.ErrNoRows {
-		return "", nil
-	}
-	if localHashQueryError != nil {
-		return "", localHashQueryError
-	}
-
-	return localHash.String, nil
-}
-
 // Saves the hash both devices now agree on, after a successful sync.
 // The sender calls this after sending a file, and the receiver after accepting it.
 func SetBaseHash(db *sql.DB, fileID string, agreedHash string) error {

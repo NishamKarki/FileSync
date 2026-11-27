@@ -5,24 +5,18 @@ import "context"
 
 // Rabindra Neupane
 // FileMetadata describes one proposed file version and its ordered chunk hashes.
-// Base fields identify the shared version used for incremental comparison.
-// Version counters are local; BaseChunkHashes identifies the shared content base.
+// BaseHash identifies the shared whole-file content used by conflict detection.
 type FileMetadata struct {
 	// Conflict contract agreed with Santosh Tripathee; base is a whole-file SHA-256.
-	BaseHash    string `json:"baseHash"`
-	DeviceID    string `json:"deviceId"`
-	FileID      string `json:"fileId"`
-	FileName    string `json:"fileName"`
-	Version     int    `json:"version"`
-	BaseVersion *int   `json:"baseVersion"`
-	// Nil means the base is unknown; an empty list identifies an empty base file.
-	BaseChunkHashes []string `json:"baseChunkHashes"`
-	// Content identities along the sender's parent chain allow lagging peers to catch up.
-	BaseRevisions []string `json:"baseRevisions,omitempty"`
-	FileSize      int64    `json:"fileSize"`
-	ChunkSize     int64    `json:"chunkSize"`
-	ChunkHashes   []string `json:"chunkHashes"`
-	FileHash      string   `json:"fileHash"`
+	BaseHash    string   `json:"baseHash"`
+	DeviceID    string   `json:"deviceId"`
+	FileID      string   `json:"fileId"`
+	FileName    string   `json:"fileName"`
+	Version     int      `json:"version"`
+	FileSize    int64    `json:"fileSize"`
+	ChunkSize   int64    `json:"chunkSize"`
+	ChunkHashes []string `json:"chunkHashes"`
+	FileHash    string   `json:"fileHash"`
 }
 
 // Rabindra Neupane
@@ -70,6 +64,7 @@ func (e *SyncConflictError) Error() string {
 type Device struct {
 	DeviceID      string `json:"id"`
 	CoordinatorID string `json:"coordinatorId,omitempty"`
+	CAFingerprint string `json:"caFingerprint,omitempty"`
 	DeviceName    string `json:"name"`
 	DeviceIP      string `json:"ip"`
 	DevicePort    int    `json:"port"`
