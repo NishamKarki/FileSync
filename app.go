@@ -352,6 +352,15 @@ func (app *App) startup(ctx context.Context) {
 	// Start the local HTTP Server
 	// Reconstruction implementation: Nisham Karki
 	go network.StartServer(serviceCtx, "8080", app.completeIncomingTransfer, app.deviceRegistry)
+
+	// Santosh Tripathee: check that every archived copy is still unchanged
+	go func() {
+		// Wait a moment so startup work, like device registration, finishes writing first.
+		time.Sleep(5 * time.Second)
+		if _, archiveCheckError := app.CheckArchive(); archiveCheckError != nil {
+			fmt.Println("Archive check error:", archiveCheckError)
+		}
+	}()
 }
 
 // Rabindra Neupane

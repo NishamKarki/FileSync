@@ -111,71 +111,12 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	}
 
 	// Check for Files rename event
-	// Check for file rename event.
+	// Santosh Tripathee: a rename, a move out of the folder, or a delete to the
+	// Recycle Bin all show up as a rename. Instead of deleting the old chunks and
+	// the database row, the file is archived if it is still gone after a moment.
 	if fileWatcherEvent.Op&fsnotify.Rename != 0 {
-
-		fmt.Println(
-			"RENAME:",
-			fileName,
-		)
-
-		// Remove the old chunk folder.
-		oldChunkFolder :=
-			filepath.Join(
-				app.chunkStoragePath,
-				fileName,
-			)
-
-		chunkFolderRemovalError :=
-			os.RemoveAll(oldChunkFolder)
-
-		if chunkFolderRemovalError != nil {
-			fmt.Println(
-				"Old chunk folder removal error:",
-				chunkFolderRemovalError,
-			)
-		}
-
-		// Remove the old reconstructed copy if one exists.
-		oldReconstructedFile :=
-			filepath.Join(
-				app.reconstructedFilesPath,
-				fileName,
-			)
-
-		reconstructedFileRemovalError :=
-			os.Remove(oldReconstructedFile)
-
-		if reconstructedFileRemovalError != nil &&
-			!os.IsNotExist(reconstructedFileRemovalError) {
-
-			fmt.Println(
-				"Old reconstructed file removal error:",
-				reconstructedFileRemovalError,
-			)
-		}
-
-		// Remove metadata belonging to the old file name.
-		relativePath, relativePathError :=
-			filepath.Rel(
-				app.syncFolderPath,
-				fileWatcherEvent.Name,
-			)
-
-		if relativePathError == nil {
-			_, databaseRemovalError :=
-				app.db.Exec(
-					"DELETE FROM files WHERE id = ?",
-					relativePath,
-				)
-
-			if databaseRemovalError != nil {
-				fmt.Println(
-					"Old file metadata removal error:",
-					databaseRemovalError,
-				)
-			}
-		}
+		fmt.Println("RENAME:", fileName)
+		app.scheduleArchiveCheck(fileWatcherEvent.Name, "renamed or moved")
 
 		// Notify the frontend.
 		runtime.EventsEmit(
@@ -189,10 +130,9 @@ func (app *App) HandleFileEvent(fileWatcherEvent fsnotify.Event) {
 	if fileWatcherEvent.Op&fsnotify.Remove != 0 {
 		fmt.Println("REMOVE:", fileName)
 
-		// Convert the deteled/removed file path into relative file path
-		// so that the matching file can be removed from the database
-		relativePath, _ := filepath.Rel(app.syncFolderPath, fileWatcherEvent.Name)
-		app.db.Exec("DELETE FROM files WHERE id = ?", relativePath)
+		// Santosh Tripathee: keep the database row and archive the file
+		// instead of deleting its record.
+		app.scheduleArchiveCheck(fileWatcherEvent.Name, "deleted")
 
 		// Notify the frontend the file deleted event
 		runtime.EventsEmit(
@@ -278,6 +218,9 @@ func (app *App) ScheduleFileProcessing(filePath string) {
 				)
 				return
 			}
+
+			// Santosh Tripathee: the file exists again, so its record is active.
+			app.clearArchivedMark(fileName)
 
 			// Reconstruct the complete file from the stored chunks.
 			reconstructionError :=

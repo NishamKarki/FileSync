@@ -16,7 +16,9 @@ func InitDatabase(syncFolderPath string) (*sql.DB, error) {
 	dbPath := filepath.Join(filepath.Dir(syncFolderPath), "filesync.db")
 
 	// Open a connection to the database (creates the file if missing)
-	database, databaseOpenError := sql.Open("sqlite", dbPath)
+	// Wait up to 5 seconds if another part of the app is writing, instead of
+	// failing right away with "database is locked".
+	database, databaseOpenError := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)")
 	if databaseOpenError != nil {
 		return nil, databaseOpenError
 	}
@@ -33,8 +35,14 @@ func InitDatabase(syncFolderPath string) (*sql.DB, error) {
 		return nil, tableError
 	}
 
+	// Santosh Tripathee: tables for archived files and their history
+	if archiveTableError := createArchiveTables(database); archiveTableError != nil {
+		database.Close()
+		return nil, archiveTableError
+	}
+
 	// Santosh Tripathee's conflict metadata migrations, integrated with the registry.
-	for _, column := range [][2]string{{"file_versions", "content_hash"}, {"files", "last_synced_hash"}} {
+	for _, column := range [][2]string{{"file_versions", "content_hash"}, {"files", "last_synced_hash"}, {"files", "archived_at"}} {
 		if metadataColumnMigrationError := addColumnIfMissing(database, column[0], column[1], "TEXT"); metadataColumnMigrationError != nil {
 			database.Close()
 			return nil, metadataColumnMigrationError
